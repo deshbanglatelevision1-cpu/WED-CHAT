@@ -18,12 +18,29 @@ interface FirebaseConfig {
 
 // Helper to resolve the best configuration available
 const getFirebaseConfig = () => {
-    // 1. Try to get config from environment variables (useful for Vercel/Production deployment)
+    // 1. Start with the local config as the base truth for AI Studio apps
+    // This file is bootstrapped and managed by the platform.
+    const localConfig = rawFirebaseConfig as any;
+    const isLocalValid = localConfig && localConfig.apiKey && !localConfig.apiKey.includes('remixed');
+
+    // 2. Look for overrides in environment variables
     try {
-        // Individual variables (Standard Vite pattern)
         const apiKey = import.meta.env?.VITE_FIREBASE_API_KEY;
+        const configJson = import.meta.env?.VITE_FIREBASE_CONFIG;
+        const nextConfigJson = typeof process !== 'undefined' ? process.env?.NEXT_PUBLIC_FIREBASE_CONFIG : null;
+
+        if (configJson) {
+            console.log("Using Firebase config from VITE_FIREBASE_CONFIG environment variable");
+            return JSON.parse(configJson);
+        }
+
+        if (nextConfigJson) {
+            console.log("Using Firebase config from NEXT_PUBLIC_FIREBASE_CONFIG environment variable");
+            return JSON.parse(nextConfigJson);
+        }
+
         if (apiKey) {
-            console.log("Config loaded from individual VITE_FIREBASE_* environment variables");
+            console.log("Using Firebase config from individual VITE_FIREBASE_* environment variables");
             return {
                 apiKey: apiKey,
                 authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -35,26 +52,18 @@ const getFirebaseConfig = () => {
                 firestoreDatabaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID || import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
             };
         }
-
-        // Full JSON string option
-        const viteConfig = import.meta.env?.VITE_FIREBASE_CONFIG;
-        if (viteConfig) {
-            console.log("Config loaded from VITE_FIREBASE_CONFIG (JSON)");
-            return JSON.parse(viteConfig);
-        }
-
-        // Fallback for check against process.env (some build setups)
-        if (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_FIREBASE_CONFIG) {
-            console.log("Config loaded from NEXT_PUBLIC_FIREBASE_CONFIG (JSON)");
-            return JSON.parse(process.env.NEXT_PUBLIC_FIREBASE_CONFIG);
-        }
     } catch (error) {
-        console.error("Critical: Could not parse Firebase config from environment variables:", error);
+        console.error("Error parsing environment Firebase config:", error);
     }
 
-    // 2. Fallback to the local configuration file bootstrapped by AI Studio
-    console.log("Config loaded from local firebase-applet-config.json");
-    return rawFirebaseConfig;
+    // 3. Final Fallback to local config
+    if (isLocalValid) {
+        console.log("Using bootstrapped Firebase config (firebase-applet-config.json)");
+        return localConfig;
+    }
+
+    console.warn("No valid Firebase configuration found. Please run set_up_firebase.");
+    return localConfig;
 };
 
 const firebaseConfig = getFirebaseConfig() as FirebaseConfig;
@@ -67,8 +76,18 @@ if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.includes(
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// Use (default) if firestoreDatabaseId is not provided
-const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
+// Use (default) if firestoreDatabaseId is not provided or looks like a URL
+let databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
+
+// HEURISTIC: Many users accidentally paste their databaseURL (RTDB) into the Database ID field
+// Firestore Database IDs are short strings (e.g., "(default)", "my-db"), never URLs.
+if (databaseId.startsWith('http') || databaseId.includes('://') || databaseId.includes('.firebaseio.com')) {
+  console.warn(`[Firebase Diagnostics] Invalid Database ID detected: "${databaseId}". 
+  This looks like a Realtime Database URL rather than a Firestore Database ID. 
+  Falling back to "(default)".`);
+  databaseId = '(default)';
+}
+
 console.log(`[Firebase Diagnostics] Initializing Firestore.
   Project: ${firebaseConfig.projectId}
   Database: ${databaseId}

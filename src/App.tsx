@@ -89,6 +89,8 @@ export default function App() {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingTimeoutRef = useRef<number | null>(null);
 
+  const [selectedAIImage, setSelectedAIImage] = useState<File | null>(null);
+  const [selectedAIImagePreview, setSelectedAIImagePreview] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'stories' | 'ai' | 'groups' | 'communities'>('chats');
   const [groups, setGroups] = useState<Group[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
@@ -489,6 +491,18 @@ export default function App() {
     }
   };
 
+  const handleAIImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedAIImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedAIImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !currentRoom || !user) return;
@@ -506,12 +520,17 @@ export default function App() {
 
     if (currentRoom.id === 'AI_MASTER') {
       const messageText = newMessage.trim();
+      const imageToAnalyze = selectedAIImagePreview;
+      
       setNewMessage("");
+      setSelectedAIImage(null);
+      setSelectedAIImagePreview(null);
       setReplyTarget(null);
 
       const userMsg: Message = {
         id: Date.now().toString(),
         text: messageText,
+        imageUrl: imageToAnalyze || undefined,
         senderId: user.uid,
         senderName: user.displayName || "You",
         createdAt: Date.now(),
@@ -520,6 +539,27 @@ export default function App() {
       setAiMessages(prev => [...prev, userMsg]);
       setIsAITyping(true);
       
+      if (imageToAnalyze) {
+        try {
+          const analysis = await analyzeImage(imageToAnalyze, messageText || "Analyze this image in detail.");
+          setIsAITyping(false);
+          const aiMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            text: analysis,
+            senderId: 'ai',
+            senderName: 'AI Master',
+            createdAt: Date.now(),
+            isAI: true,
+            status: 'seen'
+          };
+          setAiMessages(prev => [...prev, aiMsg]);
+        } catch (err) {
+          console.error(err);
+          setIsAITyping(false);
+        }
+        return;
+      }
+
       // Check for commands
       if (messageText.toLowerCase().startsWith('/imagine ')) {
         const prompt = messageText.substring(9).trim();
@@ -1616,13 +1656,12 @@ export default function App() {
                 </div>
                 <button 
                   onClick={() => setShowMyQr(true)}
-                  className="text-[10px] font-mono font-black bg-master-red text-white px-2 py-0.5 rounded-md inline-flex items-center gap-1 mt-0.5 shadow-[0_0_12px_rgba(211,47,47,0.5)] border border-white/20 uppercase tracking-tighter hover:scale-105 active:scale-95 transition-all group" 
-                  title="Verified Identity - Click for QR"
+                  className="mt-1 flex items-center gap-1.5 px-2 py-1 bg-black/40 border border-white/10 rounded-lg text-premium-blue-light hover:bg-black/60 transition-all group"
+                  title="Unique Chat ID - Click for QR"
                 >
-                  <Check size={8} strokeWidth={4} className="group-hover:rotate-12 transition-transform" /> 
-                  <span className="mr-1">ID:</span>
-                  {userProfile?.uniqueId || "Loading..."} 
-                  <QrCode size={8} className="ml-1 opacity-70" />
+                  <span className="text-[9px] font-black uppercase tracking-tighter opacity-60">ID:</span>
+                  <span className="text-[11px] font-mono font-bold tracking-tight">{userProfile?.uniqueId || "Syncing..."}</span>
+                  <QrCode size={10} className="ml-auto opacity-40 group-hover:opacity-100 transition-opacity" />
                 </button>
               </div>
             </div>
@@ -1634,14 +1673,14 @@ export default function App() {
                   setTargetLanguage(userProfile?.preferredLanguage || "Bengali");
                   setShowProfileEdit(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white/10 text-white rounded-xl hover:bg-premium-blue transition-all group"
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-premium-blue to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-premium-blue transition-all group shadow-lg shadow-blue-900/40"
                 title="Profile Settings"
               >
-                <Smile size={18} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[10px] font-black uppercase tracking-widest hidden lg:inline">Profile</span>
+                <UserCircle2 size={20} className="group-hover:rotate-12 transition-transform" />
+                <span className="text-[11px] font-black uppercase tracking-[0.1em]">Profile</span>
               </button>
-              <button onClick={() => setShowAddContact(!showAddContact)} className={clsx("p-2 rounded-full transition", showAddContact ? "bg-master-red text-white" : "bg-white/10 text-white hover:bg-white/20")} title="Add Contact">
-                <UserPlus size={18} />
+              <button onClick={() => setShowAddContact(!showAddContact)} className={clsx("p-2.5 rounded-xl transition-all shadow-lg", showAddContact ? "bg-master-red text-white shadow-red-900/40 scale-105" : "bg-white/10 text-white hover:bg-white/20")} title="Add Contact">
+                <UserPlus size={20} />
               </button>
               <button onClick={logout} className="p-2 bg-white/10 text-white rounded-full hover:bg-master-red transition" title="Logout">
                 <LogOut size={18} />
@@ -2164,7 +2203,7 @@ export default function App() {
                         )}
 
                         {/* AI Facilities Toolbar for Messages */}
-                        {!isMine && currentRoom.id !== 'AI_MASTER' && (
+                        {!isMine && (
                           <div className="flex items-center gap-3 mt-2 pt-2 border-t border-white/5 opacity-40 hover:opacity-100 transition-opacity">
                             {decryptedText && (
                               <>
@@ -2373,12 +2412,42 @@ export default function App() {
                   <span>Write Content</span>
                 </button>
                 <button
-                  onClick={() => setNewMessage("Explain code: ")}
-                  className="whitespace-nowrap px-4 py-1.5 bg-premium-blue/20 hover:bg-premium-blue/40 border border-premium-blue/40 text-premium-blue rounded-full text-xs font-black uppercase tracking-widest transition backdrop-blur-md flex items-center gap-2"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.onchange = (e) => handleAIImageSelect(e as any);
+                    input.click();
+                  }}
+                  className="whitespace-nowrap px-4 py-1.5 bg-orange-400/20 hover:bg-orange-400/40 border border-orange-400/40 text-orange-400 rounded-full text-xs font-black uppercase tracking-widest transition backdrop-blur-md flex items-center gap-2"
                 >
                   <BrainCircuit size={14} />
-                  <span>Explain Code</span>
+                  <span>Analyze Image</span>
                 </button>
+              </div>
+            )}
+
+            {selectedAIImagePreview && currentRoom.id === 'AI_MASTER' && (
+              <div className="max-w-4xl mx-auto mb-3 animate-in slide-in-from-bottom-2 duration-300">
+                <div className="relative inline-block group">
+                  <img 
+                    src={selectedAIImagePreview} 
+                    alt="Preview" 
+                    className="h-32 w-auto rounded-2xl border-2 border-orange-500/50 shadow-lg shadow-orange-500/20" 
+                  />
+                  <button 
+                    onClick={() => {
+                      setSelectedAIImage(null);
+                      setSelectedAIImagePreview(null);
+                    }}
+                    className="absolute -top-2 -right-2 bg-master-red text-white p-1.5 rounded-full shadow-lg hover:scale-110 transition-transform"
+                  >
+                    <X size={14} />
+                  </button>
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl">
+                    <span className="text-[10px] font-black uppercase text-white">AI Vision Ready</span>
+                  </div>
+                </div>
               </div>
             )}
 

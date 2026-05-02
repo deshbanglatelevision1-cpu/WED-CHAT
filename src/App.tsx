@@ -8,9 +8,9 @@ import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { auth, loginWithGoogle, logout } from "./lib/firebase";
 import { subscribeToRooms, subscribeToMessages, createRoom, sendMessage, sendImageMessage, sendStructuredMessage, updateMessageStatus, markMessagesAsSeen, deleteMessage, getOrCreateUserProfile, searchUserByUniqueId, searchUserByEmail, searchUserByDisplayName, addContact, subscribeToUserProfile, fetchContactsProfiles, getOrCreate1on1Room, subscribeToStories, addStory, markStorySeen, addReaction, updateTypingStatus, subscribeToTypingStatus, subscribeToGroups, subscribeToCommunities, createGroup, joinGroupByCode, createCommunity, subscribeToGroupMessages, subscribeToAnnouncements, sendGroupMessage, sendAnnouncement } from "./lib/firestoreService";
 import { encryptMessage, decryptMessage } from "./lib/encryption";
-import { getAIResponse, getSmartReplies, translateText } from "./lib/ai";
+import { getAIResponse, getSmartReplies, translateText, analyzeImage, generateAIImage, summarizeConversation, generateSpeech, magicRewrite } from "./lib/ai";
 import { Room, Message, UserProfile, Story, Group, Community } from "./types";
-import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2 } from "lucide-react";
+import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2, Sparkles, BookOpen, BrainCircuit } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { format } from "date-fns";
 import clsx from "clsx";
@@ -58,6 +58,11 @@ export default function App() {
   const [showPollModal, setShowPollModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAISummarizing, setIsAISummarizing] = useState(false);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [isAIImageGenerating, setIsAIImageGenerating] = useState(false);
+  const [isTTSPlaying, setIsTTSPlaying] = useState<string | null>(null);
+  const [isMagicRewriting, setIsMagicRewriting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [showMyQr, setShowMyQr] = useState(false);
@@ -93,12 +98,15 @@ export default function App() {
   const [joinCode, setJoinCode] = useState("");
   const [selectedContactsForGroup, setSelectedContactsForGroup] = useState<string[]>([]);
   const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
   const [communityName, setCommunityName] = useState("");
+  const [communityDescription, setCommunityDescription] = useState("");
   const [showGroupProfile, setShowGroupProfile] = useState(false);
   const [groupInviteSearch, setGroupInviteSearch] = useState("");
   const [groupInviteResults, setGroupInviteResults] = useState<UserProfile[]>([]);
   const [isInviteSearching, setIsInviteSearching] = useState(false);
   const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
+  const [isFirebaseOffline, setIsFirebaseOffline] = useState(false);
   const [groupMembers, setGroupMembers] = useState<UserProfile[]>([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -133,15 +141,24 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        const profile = await getOrCreateUserProfile({
-          uid: u.uid,
-          displayName: u.displayName,
-          photoURL: u.photoURL,
-          email: u.email,
-        });
-        if (profile) {
-          setEditProfileName(profile.displayName);
-          setEditProfileBio(profile.bio || "");
+        try {
+          const profile = await getOrCreateUserProfile({
+            uid: u.uid,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            email: u.email,
+          });
+          if (profile) {
+            setUserProfile(profile);
+            setEditProfileName(profile.displayName);
+            setEditProfileBio(profile.bio || "");
+          }
+        } catch (error: any) {
+          console.error("Profile fetch error:", error);
+          if (error.message?.includes("offline")) {
+            setIsFirebaseOffline(true);
+            setLoginErrorMessage("Firebase Firestore is currently unreachable (Project is offline). This is usually a configuration error or network restriction.");
+          }
         }
       }
       setAuthInitialized(true);
@@ -320,6 +337,158 @@ export default function App() {
     }
   };
 
+  const handleSummarizeChat = async () => {
+    if (!currentRoom || messages.length === 0) return;
+    setIsAISummarizing(true);
+    setAiSummary(null);
+    try {
+      const texts = filteredMessages.map(m => {
+        const dec = m.isAI ? m.text : decryptMessage(m.text || "", secretKey);
+        return `${m.senderName}: ${dec}`;
+      });
+      const summary = await summarizeConversation(texts);
+      setAiSummary(summary);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAISummarizing(false);
+    }
+  };
+
+  const handleTTS = async (text: string, msgId: string) => {
+    if (isTTSPlaying) return;
+    setIsTTSPlaying(msgId);
+    try {
+      const audioData = await generateSpeech(text);
+      if (audioData) {
+        const audio = new Audio(audioData);
+        audio.onended = () => setIsTTSPlaying(null);
+        audio.onerror = () => setIsTTSPlaying(null);
+        await audio.play();
+      } else {
+        setIsTTSPlaying(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setIsTTSPlaying(null);
+    }
+  };
+
+  const handleAnalyzeChatImage = async (imageUrl: string) => {
+    if (!user) return;
+    
+    // Switch to AI chat and ask about the image
+    setCurrentRoom({
+      id: 'AI_MASTER',
+      name: '✨ AI Master',
+      createdBy: 'system',
+      createdAt: 0,
+      isAI: true
+    } as Room);
+    setIsSidebarOpen(false);
+
+    setIsAITyping(true);
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      text: "Analyzing image...",
+      imageUrl: imageUrl,
+      senderId: user.uid,
+      senderName: user.displayName || "You",
+      createdAt: Date.now(),
+      status: 'seen'
+    };
+    setAiMessages(prev => [...prev, userMsg]);
+
+    try {
+      // Need base64 or reachable URL. For now we assume the URL is usable by getting blob
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = reader.result as string;
+        const analysis = await analyzeImage(base64, "Tell me about this image in detail.");
+        setIsAITyping(false);
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: analysis,
+          senderId: 'ai',
+          senderName: 'AI Master',
+          createdAt: Date.now(),
+          isAI: true,
+          status: 'seen'
+        };
+        setAiMessages(prev => [...prev, aiMsg]);
+      };
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      console.error(err);
+      setIsAITyping(false);
+    }
+  };
+
+  const handleAIImageGen = async (prompt: string) => {
+    if (!user) return;
+    setIsAIImageGenerating(true);
+    
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      text: `Generate image: ${prompt}`,
+      senderId: user.uid,
+      senderName: user.displayName || "You",
+      createdAt: Date.now(),
+      status: 'seen'
+    };
+    setAiMessages(prev => [...prev, userMsg]);
+    setIsAITyping(true);
+
+    try {
+      const imageUrl = await generateAIImage(prompt);
+      setIsAITyping(false);
+      if (imageUrl) {
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: "Here is your generated image ✨",
+          imageUrl: imageUrl,
+          senderId: 'ai',
+          senderName: 'AI Master',
+          createdAt: Date.now(),
+          isAI: true,
+          status: 'seen'
+        };
+        setAiMessages(prev => [...prev, aiMsg]);
+      } else {
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: "I couldn't generate that image. Maybe try a simpler prompt?",
+          senderId: 'ai',
+          senderName: 'AI Master',
+          createdAt: Date.now(),
+          isAI: true,
+          status: 'seen'
+        };
+        setAiMessages(prev => [...prev, aiMsg]);
+      }
+    } catch (err) {
+      console.error(err);
+      setIsAITyping(false);
+    } finally {
+      setIsAIImageGenerating(false);
+    }
+  };
+
+  const handleMagicRewrite = async () => {
+    if (!newMessage.trim()) return;
+    setIsMagicRewriting(true);
+    try {
+      const rewritten = await magicRewrite(newMessage);
+      setNewMessage(rewritten);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsMagicRewriting(false);
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !currentRoom || !user) return;
@@ -336,19 +505,35 @@ export default function App() {
     setReplyTarget(null);
 
     if (currentRoom.id === 'AI_MASTER') {
+      const messageText = newMessage.trim();
+      setNewMessage("");
+      setReplyTarget(null);
+
       const userMsg: Message = {
         id: Date.now().toString(),
-        text: newMessage.trim(),
+        text: messageText,
         senderId: user.uid,
         senderName: user.displayName || "You",
         createdAt: Date.now(),
         status: 'seen'
       };
       setAiMessages(prev => [...prev, userMsg]);
-      const messageText = newMessage.trim();
       setIsAITyping(true);
       
-      const aiReply = await getAIResponse(messageText);
+      // Check for commands
+      if (messageText.toLowerCase().startsWith('/imagine ')) {
+        const prompt = messageText.substring(9).trim();
+        await handleAIImageGen(prompt);
+        return;
+      }
+
+      // Convert aiMessages to Gemini history format
+      const history = aiMessages.map(m => ({
+        role: m.senderId === user.uid ? "user" : "model",
+        parts: [{ text: m.text || "" }]
+      }));
+
+      const aiReply = await getAIResponse(messageText, history);
       setIsAITyping(false);
       
       const aiMsg: Message = {
@@ -516,8 +701,9 @@ export default function App() {
   const handleCreateGroup = async () => {
     if (!user || !groupName.trim() || selectedContactsForGroup.length === 0) return;
     try {
-      await createGroup(groupName.trim(), "", selectedContactsForGroup, user.uid);
+      await createGroup(groupName.trim(), groupDescription.trim(), selectedContactsForGroup, user.uid);
       setGroupName("");
+      setGroupDescription("");
       setSelectedContactsForGroup([]);
       setShowCreateGroup(false);
     } catch (error) {
@@ -546,8 +732,9 @@ export default function App() {
   const handleCreateCommunity = async () => {
     if (!user || !communityName.trim()) return;
     try {
-      await createCommunity(communityName.trim(), "", user.uid);
+      await createCommunity(communityName.trim(), communityDescription.trim(), user.uid);
       setCommunityName("");
+      setCommunityDescription("");
       setShowCreateCommunity(false);
       setActiveTab('communities');
     } catch (error) {
@@ -880,25 +1067,108 @@ export default function App() {
         );
       case 'ai':
         return (
-          <div className="p-10 text-center flex flex-col items-center justify-center h-full">
-            <Bot size={48} className="text-orange-400 mb-4 animate-bounce" />
-            <h3 className="text-lg font-bold mb-2">AI Master</h3>
-            <p className="text-sm text-gray-400 mb-6">Chat with our powerful AI assistant to translate, write code, or just chat.</p>
-            <button 
-              onClick={() => {
-                setCurrentRoom({
-                  id: 'AI_MASTER',
-                  name: '✨ AI Master',
-                  createdBy: 'system',
-                  createdAt: 0,
-                  isAI: true
-                } as Room);
-                setIsSidebarOpen(false);
-              }}
-              className="px-6 py-2 bg-orange-500 hover:bg-orange-600 rounded-full font-bold transition shadow-lg"
-            >
-              Start AI Chat
-            </button>
+          <div className="flex flex-col h-full bg-bg-dark/40 overflow-y-auto custom-scrollbar">
+            <div className="p-8 text-center bg-gradient-to-b from-orange-500/10 to-transparent">
+              <div className="inline-block p-4 rounded-3xl bg-orange-500/20 mb-4 animate-pulse">
+                <Sparkles size={48} className="text-orange-400" />
+              </div>
+              <h2 className="text-3xl font-black text-white tracking-tighter mb-2">AI Master Labs</h2>
+              <p className="text-gray-400 max-w-sm mx-auto text-sm leading-relaxed">
+                Experience the next generation of communication with our integrated AI facilities.
+              </p>
+            </div>
+
+            <div className="p-4 grid grid-cols-1 gap-4 max-w-2xl mx-auto w-full pb-20">
+              {/* Feature Cards */}
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-orange-500/30 transition-all cursor-pointer" 
+                onClick={() => {
+                  setCurrentRoom({ id: 'AI_MASTER', name: '✨ AI Master', createdBy: 'system', createdAt: 0, isAI: true } as Room);
+                  setIsSidebarOpen(false);
+                }}
+              >
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-orange-500/20 flex items-center justify-center text-orange-400 flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <Bot size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Interactive AI Assistant</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Chat naturally with Gemini. Ask questions, get advice, or just converse in real-time.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-master-red/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-master-red/20 flex items-center justify-center text-master-red flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <Sparkles size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Magic Rewrite</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Fix grammar, change tone, or improve clarity of your messages instantly with our writing assistant.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-premium-blue/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-premium-blue/20 flex items-center justify-center text-premium-blue flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <ImageIcon size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">AI Image Generation</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Turn your imagination into art. Use the <code className="text-orange-400">/imagine</code> command in AI chat to create unique images.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-orange-400/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-orange-400/20 flex items-center justify-center text-orange-400 flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <BrainCircuit size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Smart AI Vision</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Upload any image and let the AI analyze its contents, read text, or identify objects for you.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-green-500/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-green-500/20 flex items-center justify-center text-green-500 flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <BookOpen size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Conversation Summary</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Caught up late in a group? Get an AI-powered summary of missed messages with a single click.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-yellow-500/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-yellow-500/20 flex items-center justify-center text-yellow-500 flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <Volume2 size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Voice Synthesis (TTS)</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Listen to any message with natural-sounding AI voices. Perfect for hands-free messaging.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-indigo-500/30 transition-all">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 flex items-center justify-center text-indigo-500 flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <Languages size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-bold mb-1">Real-time Translation</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">Break language barriers with instant high-quality translation for any incoming message.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         );
       case 'groups':
@@ -1243,8 +1513,9 @@ export default function App() {
               <div className="flex items-start gap-3">
                 <Shield size={18} className="flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="font-bold mb-1">Access Denied</p>
+                  <p className="font-bold mb-1">Access Problem</p>
                   <p className="text-xs opacity-90 leading-relaxed">{loginErrorMessage}</p>
+                  
                   {loginErrorMessage.includes("unauthorized-domain") || loginErrorMessage.includes("Authorized domains") ? (
                     <div className="mt-3 space-y-2">
                       <p className="text-[10px] text-white/60">How to fix:</p>
@@ -1253,6 +1524,24 @@ export default function App() {
                         <li>Authentication &gt; Settings &gt; Authorized Domains</li>
                         <li>Add <code className="bg-black/40 px-1 rounded text-white">{window.location.hostname}</code></li>
                       </ol>
+                    </div>
+                  ) : null}
+
+                  {(isFirebaseOffline || loginErrorMessage.includes("unreachable") || loginErrorMessage.includes("offline")) ? (
+                    <div className="mt-3 p-2 bg-black/40 rounded-lg space-y-2">
+                      <p className="text-[10px] font-bold text-premium-blue">Database Diagnostics:</p>
+                      <ul className="text-[10px] list-disc list-inside space-y-1 text-white/60">
+                        <li>Check if <b>Firestore</b> is enabled in Firebase Console.</li>
+                        <li>Verify <b>Database ID</b> matches your console.</li>
+                        <li>Check if you reached <b>Firebase Quota</b> limits.</li>
+                        <li>Try disabling VPN or Ad-Blockers.</li>
+                      </ul>
+                      <button 
+                        onClick={() => window.location.reload()}
+                        className="w-full mt-2 py-1 bg-white/10 hover:bg-white/20 rounded text-[9px] uppercase tracking-widest font-black transition-all"
+                      >
+                        Retry Connection
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -1320,41 +1609,36 @@ export default function App() {
               )}
               <div className="font-semibold truncate max-w-[150px] text-white">
                 <div className="flex flex-col">
-                  <span className="truncate">{userProfile?.displayName || user.displayName}</span>
-                  {userProfile?.bio && (
-                    <span className="text-[10px] text-gray-400 font-normal italic truncate max-w-[120px]">
-                      {userProfile.bio}
-                    </span>
-                  )}
+                  <span className="truncate font-bold text-sm">{userProfile?.displayName || user.displayName || "User"}</span>
+                  <span className="text-[10px] text-gray-400 font-normal italic truncate max-w-[120px]">
+                    {userProfile?.bio || "No bio set"}
+                  </span>
                 </div>
-                {userProfile && (
-                  <button 
-                    onClick={() => setShowMyQr(true)}
-                    className="text-[10px] font-mono font-black bg-master-red text-white px-2 py-0.5 rounded-md inline-flex items-center gap-1 mt-0.5 shadow-[0_0_12px_rgba(211,47,47,0.5)] border border-white/20 uppercase tracking-tighter hover:scale-105 active:scale-95 transition-all group" 
-                    title="Verified Identity - Click for QR"
-                  >
-                    <Check size={8} strokeWidth={4} className="group-hover:rotate-12 transition-transform" /> 
-                    <span className="mr-1">VERIFIED:</span>
-                    {userProfile.uniqueId} 
-                    <QrCode size={8} className="ml-1 opacity-70" />
-                  </button>
-                )}
+                <button 
+                  onClick={() => setShowMyQr(true)}
+                  className="text-[10px] font-mono font-black bg-master-red text-white px-2 py-0.5 rounded-md inline-flex items-center gap-1 mt-0.5 shadow-[0_0_12px_rgba(211,47,47,0.5)] border border-white/20 uppercase tracking-tighter hover:scale-105 active:scale-95 transition-all group" 
+                  title="Verified Identity - Click for QR"
+                >
+                  <Check size={8} strokeWidth={4} className="group-hover:rotate-12 transition-transform" /> 
+                  <span className="mr-1">ID:</span>
+                  {userProfile?.uniqueId || "Loading..."} 
+                  <QrCode size={8} className="ml-1 opacity-70" />
+                </button>
               </div>
             </div>
             <div className="flex gap-1.5">
               <button 
                 onClick={() => {
-                  if (userProfile) {
-                    setEditProfileName(userProfile.displayName);
-                    setEditProfileBio(userProfile.bio || "");
-                    setTargetLanguage(userProfile.preferredLanguage || "Bengali");
-                    setShowProfileEdit(true);
-                  }
+                  setEditProfileName(userProfile?.displayName || user.displayName || "");
+                  setEditProfileBio(userProfile?.bio || "");
+                  setTargetLanguage(userProfile?.preferredLanguage || "Bengali");
+                  setShowProfileEdit(true);
                 }}
-                className="p-2 bg-white/10 text-white rounded-full hover:bg-premium-blue transition"
+                className="flex items-center gap-1.5 px-3 py-2 bg-white/10 text-white rounded-xl hover:bg-premium-blue transition-all group"
                 title="Profile Settings"
               >
-                <Smile size={18} />
+                <Smile size={18} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-black uppercase tracking-widest hidden lg:inline">Profile</span>
               </button>
               <button onClick={() => setShowAddContact(!showAddContact)} className={clsx("p-2 rounded-full transition", showAddContact ? "bg-master-red text-white" : "bg-white/10 text-white hover:bg-white/20")} title="Add Contact">
                 <UserPlus size={18} />
@@ -1673,6 +1957,22 @@ export default function App() {
                     <Search size={20} />
                   </button>
                 )}
+                {currentRoom && !currentRoom.isAI && (
+                  <button 
+                    onClick={handleSummarizeChat}
+                    disabled={isAISummarizing}
+                    className={clsx(
+                      "p-2 rounded-full transition-all group relative",
+                      isAISummarizing ? "bg-master-red/20 text-master-red animate-pulse" : "hover:bg-master-red/10 text-gray-400 hover:text-master-red"
+                    )}
+                    title="Smart AI Summary"
+                  >
+                    <Sparkles size={20} />
+                    <span className="absolute -bottom-10 right-0 bg-master-red text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                      Smart Summary
+                    </span>
+                  </button>
+                )}
               </div>
             </>
           ) : (
@@ -1863,6 +2163,42 @@ export default function App() {
                            </div>
                         )}
 
+                        {/* AI Facilities Toolbar for Messages */}
+                        {!isMine && currentRoom.id !== 'AI_MASTER' && (
+                          <div className="flex items-center gap-3 mt-2 pt-2 border-t border-white/5 opacity-40 hover:opacity-100 transition-opacity">
+                            {decryptedText && (
+                              <>
+                                <button 
+                                  onClick={() => handleTTS(decryptedText, msg.id)}
+                                  className={clsx("flex items-center gap-1 text-[10px] uppercase font-black hover:text-master-red transition-colors", isTTSPlaying === msg.id && "text-master-red animate-pulse")}
+                                  title="Listen (AI TTS)"
+                                >
+                                  <Volume2 size={12} />
+                                  <span>Listen</span>
+                                </button>
+                                <button 
+                                  onClick={() => handleTranslate(msg)}
+                                  className="flex items-center gap-1 text-[10px] uppercase font-black hover:text-premium-blue transition-colors"
+                                  title="Translate (AI)"
+                                >
+                                  <Languages size={12} />
+                                  <span>Translate</span>
+                                </button>
+                              </>
+                            )}
+                            {msg.imageUrl && (
+                              <button 
+                                onClick={() => handleAnalyzeChatImage(msg.imageUrl!)}
+                                className="flex items-center gap-1 text-[10px] uppercase font-black hover:text-orange-400 transition-colors"
+                                title="Analyze with AI Vision"
+                              >
+                                <Bot size={12} />
+                                <span>Analyze</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-end gap-1 mt-1 opacity-70">
                           {isMine && currentRoom.id !== 'AI_MASTER' && (
                              <div className="flex items-center gap-1">
@@ -2009,14 +2345,40 @@ export default function App() {
                     key={idx}
                     onClick={() => {
                       setNewMessage(reply);
-                      // Let user press send or we could send it directly.
-                      // Usually "Smart Reply" chips tap to insert or tap to send. We'll just insert.
                     }}
-                    className="whitespace-nowrap px-4 py-1.5 bg-premium-blue/40 hover:bg-premium-blue/80 border border-premium-blue text-white rounded-full text-sm font-medium transition cursor-pointer backdrop-blur-md shadow-sm"
+                    className="whitespace-nowrap px-4 py-1.5 bg-premium-blue/40 hover:bg-premium-blue/80 border border-premium-blue text-white rounded-full text-sm font-medium transition cursor-pointer backdrop-blur-md shadow-sm flex items-center gap-1.5"
                   >
+                    <Send size={12} className="opacity-70" />
                     {reply}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* AI Master Quick Actions */}
+            {currentRoom.id === 'AI_MASTER' && (
+              <div className="max-w-4xl mx-auto flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
+                <button
+                  onClick={() => setNewMessage("/imagine A futuristic digital city with neon lights")}
+                  className="whitespace-nowrap px-4 py-1.5 bg-orange-500/20 hover:bg-orange-500/40 border border-orange-500/40 text-orange-400 rounded-full text-xs font-black uppercase tracking-widest transition backdrop-blur-md flex items-center gap-2"
+                >
+                  <ImageIcon size={14} />
+                  <span>Generate Image</span>
+                </button>
+                <button
+                  onClick={() => setNewMessage("Help me write a professional email...")}
+                  className="whitespace-nowrap px-4 py-1.5 bg-master-red/20 hover:bg-master-red/40 border border-master-red/40 text-master-red rounded-full text-xs font-black uppercase tracking-widest transition backdrop-blur-md flex items-center gap-2"
+                >
+                  <Bot size={14} />
+                  <span>Write Content</span>
+                </button>
+                <button
+                  onClick={() => setNewMessage("Explain code: ")}
+                  className="whitespace-nowrap px-4 py-1.5 bg-premium-blue/20 hover:bg-premium-blue/40 border border-premium-blue/40 text-premium-blue rounded-full text-xs font-black uppercase tracking-widest transition backdrop-blur-md flex items-center gap-2"
+                >
+                  <BrainCircuit size={14} />
+                  <span>Explain Code</span>
+                </button>
               </div>
             )}
 
@@ -2140,16 +2502,32 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <input
-                    type="text"
-                    value={newMessage}
-                    onChange={(e) => {
-                      setNewMessage(e.target.value);
-                      handleTyping();
-                    }}
-                    placeholder={currentRoom.id === 'AI_MASTER' ? "Ask AI Master anything..." : "Message"}
-                    className="w-full bg-[#1A2332]/50 border border-white/10 rounded-3xl pl-5 pr-4 py-3 focus:outline-none focus:border-premium-blue focus:ring-1 focus:ring-premium-blue text-white placeholder-gray-500 shadow-inner"
-                  />
+                  <div className="relative flex-1 flex items-center">
+                    <input
+                      type="text"
+                      value={newMessage}
+                      onChange={(e) => {
+                        setNewMessage(e.target.value);
+                        handleTyping();
+                      }}
+                      placeholder={currentRoom.id === 'AI_MASTER' ? "Ask AI Master anything..." : "Message"}
+                      className="w-full bg-[#1A2332]/50 border border-white/10 rounded-3xl pl-5 pr-14 py-3 focus:outline-none focus:border-premium-blue focus:ring-1 focus:ring-premium-blue text-white placeholder-gray-500 shadow-inner"
+                    />
+                    {newMessage.trim() && (
+                      <button
+                        type="button"
+                        onClick={handleMagicRewrite}
+                        disabled={isMagicRewriting}
+                        className={clsx(
+                          "absolute right-4 p-1.5 rounded-lg text-master-red transition-all z-10",
+                          isMagicRewriting ? "animate-pulse" : "hover:bg-master-red/10"
+                        )}
+                        title="Magic Rewrite"
+                      >
+                        <Sparkles size={18} className={clsx(isMagicRewriting && "animate-spin")} />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
               {newMessage.trim() && !isRecording ? (
@@ -2175,6 +2553,40 @@ export default function App() {
       </div>
       {showPollModal && <PollModal onClose={() => setShowPollModal(false)} onSubmit={handleCreatePoll} />}
       {showEventModal && <EventModal onClose={() => setShowEventModal(false)} onSubmit={handleCreateEvent} />}
+
+      {aiSummary && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[110] flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-bg-panel border border-master-red/20 p-6 rounded-3xl max-w-lg w-full shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-master-red to-orange-500" />
+            <button 
+              onClick={() => setAiSummary(null)}
+              className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
+            >
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="bg-master-red/20 p-2 rounded-xl text-master-red">
+                <Sparkles size={24} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">AI Smart Summary</h3>
+                <p className="text-xs text-gray-400">Key takeaways from this conversation</p>
+              </div>
+            </div>
+            <div className="bg-black/20 border border-white/5 p-4 rounded-2xl max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <div className="text-gray-200 leading-relaxed whitespace-pre-wrap text-sm">
+                {aiSummary}
+              </div>
+            </div>
+            <button 
+              onClick={() => setAiSummary(null)}
+              className="w-full mt-6 py-3 bg-master-red text-white rounded-xl font-bold hover:bg-red-700 transition shadow-lg ripple-red"
+            >
+              Back to Chat
+            </button>
+          </div>
+        </div>
+      )}
       
       {showStoryUpload && user && (
         <StoryUploadModal 
@@ -2207,6 +2619,15 @@ export default function App() {
                   onChange={(e) => setGroupName(e.target.value)}
                   className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-master-red"
                   placeholder="The Squad"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest block mb-1">Group Description (Optional)</label>
+                <textarea 
+                  value={groupDescription}
+                  onChange={(e) => setGroupDescription(e.target.value)}
+                  className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-master-red resize-none h-24"
+                  placeholder="What is this group about?"
                 />
               </div>
               <div>
@@ -2454,6 +2875,15 @@ export default function App() {
                   placeholder="Tech Enthusiasts"
                 />
               </div>
+              <div>
+                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest block mb-1">Community Description (Optional)</label>
+                <textarea 
+                  value={communityDescription}
+                  onChange={(e) => setCommunityDescription(e.target.value)}
+                  className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-premium-blue resize-none h-24"
+                  placeholder="What is this community about?"
+                />
+              </div>
               <p className="text-xs text-gray-400 leading-relaxed">
                 Communities bring related groups together. You will get an <strong>Announcement Channel</strong> and the ability to link multiple groups.
               </p>
@@ -2560,7 +2990,7 @@ export default function App() {
       )}
 
       {/* Profile Edit Modal */}
-      {showProfileEdit && userProfile && (
+      {showProfileEdit && user && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[110] flex items-center justify-center p-4 animate-in fade-in duration-300">
           <div className="bg-[#1A2332] border border-white/10 p-6 rounded-3xl max-w-sm w-full shadow-2xl relative overflow-hidden glassmorphism">
              {/* Decorative header */}
@@ -2572,7 +3002,7 @@ export default function App() {
                    Profile Settings
                 </h3>
                 <button onClick={() => setShowProfileEdit(false)} className="p-2 hover:bg-white/10 rounded-full text-gray-400">
-                  <X size={20} />
+                   <X size={20} />
                 </button>
              </div>
 
@@ -2580,7 +3010,7 @@ export default function App() {
                 <div className="relative group">
                   <div className="w-24 h-24 rounded-full border-4 border-[#1A2332] overflow-hidden shadow-2xl relative transition-transform hover:scale-105">
                     <img 
-                      src={userProfile.photoURL || `https://ui-avatars.com/api/?name=${userProfile.displayName}&background=1A237E&color=fff`} 
+                      src={userProfile?.photoURL || user.photoURL || `https://ui-avatars.com/api/?name=${userProfile?.displayName || user.displayName || 'User'}&background=1A237E&color=fff`} 
                       alt="Profile" 
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
@@ -2599,7 +3029,7 @@ export default function App() {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <div className="text-xs font-mono bg-master-red px-2 py-0.5 rounded text-white shadow-sm border border-white/10 uppercase tracking-tighter">
-                    ID: {userProfile.uniqueId}
+                    ID: {userProfile?.uniqueId || "LOADING..."}
                   </div>
                 </div>
               </div>

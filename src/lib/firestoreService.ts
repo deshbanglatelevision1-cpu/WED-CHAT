@@ -125,6 +125,14 @@ export const sendGroupMessage = async (groupId: string, text: string, user: { ui
       seenBy: [user.uid],
       createdAt: serverTimestamp()
     });
+
+    const groupRef = doc(db, 'groups', groupId);
+    await updateDoc(groupRef, {
+      lastMessage: text,
+      lastMessageAt: serverTimestamp(),
+      lastMessageSenderId: user.uid,
+      lastMessageStatus: 'sent'
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
@@ -154,6 +162,14 @@ export const sendAnnouncement = async (communityId: string, text: string, user: 
       status: 'sent',
       seenBy: [user.uid],
       createdAt: serverTimestamp()
+    });
+
+    const communityRef = doc(db, 'communities', communityId);
+    await updateDoc(communityRef, {
+      lastMessage: text,
+      lastMessageAt: serverTimestamp(),
+      lastMessageSenderId: user.uid,
+      lastMessageStatus: 'sent'
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -764,18 +780,44 @@ export const markMessagesAsSeen = async (id: string, messages: Message[], curren
         status: 'seen'
       });
       
-      if (msg.id === lastMessage.id && type === 'room') {
-        const roomRef = doc(db, 'rooms', id);
-        const roomSnap = await getDoc(roomRef);
-        if (roomSnap.exists()) {
-          const roomData = roomSnap.data();
-          if (roomData.lastMessageSenderId !== currentUserId) {
-             const participants = roomData.participants || [];
-             const seenByCount = (msg.seenBy?.length || 0) + 1; 
-             
-             await updateDoc(roomRef, {
-               lastMessageStatus: seenByCount >= participants.length ? 'seen' : 'delivered'
-             });
+      if (msg.id === lastMessage.id) {
+        if (type === 'room') {
+          const roomRef = doc(db, 'rooms', id);
+          const roomSnap = await getDoc(roomRef);
+          if (roomSnap.exists()) {
+            const roomData = roomSnap.data();
+            if (roomData.lastMessageSenderId !== currentUserId) {
+               const participants = roomData.participants || [];
+               const seenByCount = (msg.seenBy?.length || 0) + 1; 
+               
+               await updateDoc(roomRef, {
+                 lastMessageStatus: seenByCount >= participants.length ? 'seen' : 'delivered'
+               });
+            }
+          }
+        } else if (type === 'group') {
+          const groupRef = doc(db, 'groups', id);
+          const groupSnap = await getDoc(groupRef);
+          if (groupSnap.exists()) {
+            if (groupSnap.data().lastMessageSenderId !== currentUserId) {
+              const seenByCount = (msg.seenBy?.length || 0) + 1;
+              const totalMembers = groupSnap.data().memberIds?.length || 0;
+              await updateDoc(groupRef, {
+                lastMessageStatus: seenByCount >= totalMembers ? 'seen' : 'delivered'
+              });
+            }
+          }
+        } else if (type === 'announcement') {
+          const communityRef = doc(db, 'communities', id);
+          const communitySnap = await getDoc(communityRef);
+          if (communitySnap.exists()) {
+            if (communitySnap.data().lastMessageSenderId !== currentUserId) {
+              const seenByCount = (msg.seenBy?.length || 0) + 1;
+              const totalMembers = communitySnap.data().memberIds?.length || 0;
+              await updateDoc(communityRef, {
+                lastMessageStatus: seenByCount >= totalMembers ? 'seen' : 'delivered'
+              });
+            }
           }
         }
       }

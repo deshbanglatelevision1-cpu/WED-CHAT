@@ -815,17 +815,28 @@ export default function App() {
                   )}
                   <div className="flex-1 min-w-0 pr-2">
                     <div className="flex justify-between items-baseline mb-1">
-                      <div className="flex items-center gap-1.5 truncate">
+                      <div className="flex items-center gap-1.5 truncate flex-1">
                         <h3 className="font-semibold text-white truncate">{contact.displayName}</h3>
                         <div className="bg-master-red text-[8px] font-black text-white px-1.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-[0_0_5px_rgba(211,47,47,0.3)] border border-white/10 uppercase tracking-tighter">
                           <Check size={6} strokeWidth={4} /> {contact.uniqueId}
                         </div>
                       </div>
+                      {existingRoom?.lastMessageAt && (
+                        <span className="text-[10px] text-gray-500 flex-shrink-0 ml-2">
+                          {format(existingRoom.lastMessageAt, 'HH:mm')}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <p className="text-sm truncate flex-1 text-gray-400">
+                    <div className="flex items-center gap-2">
+                      <p className={clsx(
+                        "text-sm truncate flex-1",
+                        existingRoom?.lastMessageSenderId !== user?.uid && existingRoom?.lastMessageStatus !== 'seen' ? "text-white font-bold" : "text-gray-400"
+                      )}>
                         {existingRoom?.lastMessage ? decryptMessage(existingRoom.lastMessage, secretKey) : "Say hi!"}
                       </p>
+                      {existingRoom?.lastMessageSenderId !== user?.uid && existingRoom?.lastMessageStatus !== 'seen' && (
+                        <div className="w-2.5 h-2.5 bg-master-red rounded-full shadow-[0_0_8px_rgba(211,47,47,0.8)] animate-pulse" />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -931,12 +942,30 @@ export default function App() {
                     <div className="w-12 h-12 rounded-2xl bg-master-red/20 border-2 border-master-red/40 flex items-center justify-center text-master-red shadow-[0_0_15px_rgba(211,47,47,0.2)]">
                        <Users size={24} />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 pr-2">
                        <div className="flex justify-between items-center mb-1">
-                          <h3 className="font-bold text-white truncate">{group.name}</h3>
-                          <span className="text-[10px] font-mono text-master-red font-black bg-master-red/10 px-1.5 py-0.5 rounded border border-master-red/20">#{group.uniqueId}</span>
+                          <div className="flex items-center gap-2 overflow-hidden flex-1">
+                             <h3 className="font-bold text-white truncate">{group.name}</h3>
+                             {group.adminIds.includes(user?.uid || "") && (
+                               <Shield size={10} className="text-master-red flex-shrink-0" title="You are admin" />
+                             )}
+                          </div>
+                          <span className="text-[10px] font-mono text-master-red font-black bg-master-red/10 px-1.5 py-0.5 rounded border border-master-red/20 shadow-sm">#{group.uniqueId}</span>
                        </div>
-                       <p className="text-xs text-gray-400 truncate">{group.description || "No description set"}</p>
+                       <div className="flex justify-between items-center">
+                          <p className={clsx(
+                            "text-xs truncate flex-1",
+                            group.lastMessageSenderId !== user?.uid && group.lastMessageStatus !== 'seen' ? "text-white font-bold" : "text-gray-400"
+                          )}>
+                            {group.lastMessage || group.description || "No description set"}
+                          </p>
+                          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                             {group.lastMessageSenderId !== user?.uid && group.lastMessageStatus !== 'seen' && (
+                               <div className="w-2.5 h-2.5 bg-master-red rounded-full shadow-[0_0_8px_rgba(211,47,47,0.8)] animate-pulse" />
+                             )}
+                             <span className="text-[9px] text-gray-500 bg-white/5 px-2 py-0.5 rounded-full border border-white/5 whitespace-nowrap">{group.memberIds.length} members</span>
+                          </div>
+                       </div>
                     </div>
                  </div>
                ))}
@@ -983,9 +1012,20 @@ export default function App() {
                            <Shield size={24} />
                         </div>
                         <div className="flex-1 min-w-0">
-                           <h3 className="font-extrabold text-white text-base truncate flex items-center gap-2">
-                             {comm.name}
-                           </h3>
+                           <div className="flex justify-between items-center">
+                             <h3 className="font-extrabold text-white text-base truncate flex items-center gap-2">
+                               {comm.name}
+                             </h3>
+                             {comm.lastMessageSenderId !== user?.uid && comm.lastMessageStatus !== 'seen' && (
+                               <div className="w-2.5 h-2.5 bg-premium-blue rounded-full shadow-[0_0_8px_rgba(33,150,243,0.8)] animate-pulse" />
+                             )}
+                           </div>
+                           <p className={clsx(
+                             "text-xs truncate transition-colors",
+                             comm.lastMessageSenderId !== user?.uid && comm.lastMessageStatus !== 'seen' ? "text-white font-bold" : "text-gray-400"
+                           )}>
+                             {comm.lastMessage || comm.description || "Official announcements"}
+                           </p>
                            <div className="flex items-center gap-3 mt-1">
                              <span className="text-[10px] bg-premium-blue-light/20 text-premium-blue-light px-2 py-0.5 rounded font-bold uppercase tracking-wider">{comm.memberIds.length} Members</span>
                              <span className="text-[10px] text-gray-500 font-bold">{comm.uniqueId}</span>
@@ -1201,6 +1241,8 @@ export default function App() {
               loginWithGoogle().catch((error: any) => {
                 if (error.code === 'auth/popup-blocked') {
                   alert("Login popup was blocked by your browser. Please allow popups for this site, or open the app in a new tab (using the button in the top right) to sign in.");
+                } else if (error.code === 'auth/unauthorized-domain') {
+                  alert("This domain is not authorized for Firebase Authentication. Please follow these steps:\n\n1. Go to Firebase Console > Authentication > Settings > Authorized domains.\n2. Add '" + window.location.hostname + "' to the list.\n\nAfter adding it, wait a few seconds and try again.");
                 } else if (error.code === 'auth/cancelled-popup-request') {
                   console.warn("Popup request cancelled by a subsequent request.");
                 } else if (error.code !== 'auth/popup-closed-by-user') {
@@ -1547,7 +1589,10 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <h2 className="font-bold text-lg text-white">{currentRoom.name}</h2>
                     {currentRoom.type === 'group' ? (
-                      <div className="bg-master-red text-[8px] font-black text-white px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Group</div>
+                      <div className="flex items-center gap-2">
+                         <div className="bg-master-red text-[8px] font-black text-white px-1.5 py-0.5 rounded-full uppercase tracking-tighter shadow-sm border border-white/10">Group</div>
+                         <span className="text-[10px] text-gray-400">{currentRoom.participants?.length || 0} members</span>
+                      </div>
                     ) : (
                       !currentRoom.isAI && ((() => {
                         const otherParticipantId = currentRoom.participants?.find(p => p !== user?.uid);
@@ -2246,27 +2291,30 @@ export default function App() {
                           <div className="flex gap-1">
                             <input 
                               type="text" 
-                              placeholder="Email or Name"
+                              placeholder="Email or ID"
                               value={groupInviteSearch}
                               onChange={(e) => setGroupInviteSearch(e.target.value)}
-                              className="flex-1 bg-black/20 border border-white/10 rounded px-2 py-1 text-[10px] focus:outline-none"
+                              className="flex-1 bg-black/20 border border-white/10 rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-master-red transition-colors"
                             />
                             <button 
                               onClick={handleGroupInviteSearch}
-                              className="bg-master-red text-[8px] font-black uppercase text-white px-2 py-1 rounded"
+                              className="bg-master-red text-[8px] font-black uppercase text-white px-3 py-1.5 rounded-lg active:scale-95 transition-all shadow-lg"
                             >
                               Search
                             </button>
                           </div>
                           {groupInviteResults.length > 0 && (
-                            <div className="bg-black/40 border border-white/10 rounded p-1 space-y-1">
+                            <div className="bg-black/60 border border-white/10 rounded-xl p-1.5 space-y-1 animate-in fade-in slide-in-from-top-1">
                               {groupInviteResults.map(r => (
-                                <div key={r.uid} className="flex items-center justify-between gap-2 p-1 hover:bg-white/5 rounded">
-                                  <span className="text-[10px] truncate">{r.displayName}</span>
+                                <div key={r.uid} className="flex items-center justify-between gap-2 p-1.5 hover:bg-white/5 rounded-lg transition-colors">
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                     {r.photoURL ? <img src={r.photoURL} className="w-5 h-5 rounded-full object-cover" /> : <div className="w-5 h-5 rounded-full bg-premium-blue flex items-center justify-center text-[8px]">{r.displayName.charAt(0)}</div>}
+                                     <span className="text-[10px] truncate text-white">{r.displayName}</span>
+                                  </div>
                                   {!group.memberIds.includes(r.uid) ? (
-                                    <button onClick={() => handleAddMemberToGroup(r.uid)} className="bg-premium-blue text-[8px] px-1 rounded">Add</button>
+                                    <button onClick={() => handleAddMemberToGroup(r.uid)} className="bg-premium-blue text-[8px] px-2 py-1 rounded font-bold hover:bg-blue-600 transition-colors">Add</button>
                                   ) : (
-                                    <span className="text-[8px] text-gray-500">Member</span>
+                                    <span className="text-[8px] text-gray-500 font-bold px-2">Member</span>
                                   )}
                                 </div>
                               ))}
@@ -2280,31 +2328,59 @@ export default function App() {
                         const mProfile = groupMembers.find(p => p.uid === mid) || (mid === user?.uid ? userProfile : null);
                         const isAdmin = group.adminIds.includes(mid);
                         return (
-                          <div key={mid} className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5">
+                          <div key={mid} className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors group/member">
                             <div className="flex items-center gap-3">
-                              {mProfile?.photoURL ? (
-                                <img src={mProfile.photoURL} alt="" className="w-8 h-8 rounded-full object-cover" referrerPolicy="no-referrer" />
-                              ) : (
-                                <div className="w-8 h-8 rounded-full bg-premium-blue-light flex items-center justify-center font-bold text-xs">{(mProfile?.displayName || "U").charAt(0)}</div>
-                              )}
+                              <div className="relative">
+                                {mProfile?.photoURL ? (
+                                  <img src={mProfile.photoURL} alt="" className="w-10 h-10 rounded-full object-cover border border-white/10" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-full bg-premium-blue-light flex items-center justify-center font-bold text-sm text-white">{(mProfile?.displayName || "U").charAt(0)}</div>
+                                )}
+                                {isAdmin && (
+                                  <div className="absolute -top-1 -right-1 bg-master-red rounded-full p-1 border-2 border-[#1A2332] shadow-lg" title="Group Admin">
+                                    <Shield size={8} className="text-white" />
+                                  </div>
+                                )}
+                              </div>
                               <div className="flex flex-col">
                                 <span className={clsx("text-sm font-bold", mid === user?.uid ? "text-master-red" : "text-white")}>
                                   {mProfile?.displayName || "Loading..."} {mid === user?.uid && "(You)"}
                                 </span>
-                                {isAdmin && (
-                                  <span className="text-[8px] font-black uppercase text-master-red px-1.5 bg-master-red/10 rounded w-fit">Group Admin</span>
-                                )}
+                                <div className="flex gap-1 items-center mt-0.5">
+                                  {isAdmin && (
+                                    <span className="text-[7px] font-black uppercase text-white px-1.5 py-0.5 bg-master-red rounded shadow-sm tracking-tighter">Admin</span>
+                                  )}
+                                  {mProfile?.uniqueId && (
+                                    <span className="text-[7px] font-mono text-gray-500">#{mProfile.uniqueId}</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                            {group.adminIds.includes(user?.uid || "") && mid !== user?.uid && (
-                              <button 
-                                onClick={() => handleRemoveMemberFromGroup(mid)}
-                                className="p-1.5 hover:bg-white/10 rounded-lg text-gray-500 hover:text-white transition"
-                                title="Remove Member"
-                              >
-                                <LogOut size={14} className="rotate-180" />
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1 opacity-0 group-hover/member:opacity-100 transition-opacity">
+                              {group.adminIds.includes(user?.uid || "") && mid !== user?.uid && (
+                                <>
+                                  {!isAdmin && (
+                                    <button 
+                                      onClick={async () => {
+                                        const { makeGroupAdmin } = await import("./lib/firestoreService");
+                                        await makeGroupAdmin(group.id, mid);
+                                      }}
+                                      className="p-1.5 hover:bg-master-red/20 rounded-lg text-gray-500 hover:text-white transition-colors"
+                                      title="Promote to Admin"
+                                    >
+                                      <Shield size={14} />
+                                    </button>
+                                  )}
+                                  <button 
+                                    onClick={() => handleRemoveMemberFromGroup(mid)}
+                                    className="p-1.5 hover:bg-master-red/20 rounded-lg text-gray-500 hover:text-master-red transition-colors"
+                                    title="Remove Member"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         );
                       })}

@@ -26,6 +26,10 @@ export interface Community {
   uniqueId: string;
   createdAt: number;
   photoURL?: string;
+  lastMessage?: string;
+  lastMessageAt?: number;
+  lastMessageSenderId?: string;
+  lastMessageStatus?: 'sent' | 'delivered' | 'seen';
 }
 
 export interface Group {
@@ -38,6 +42,10 @@ export interface Group {
   communityId?: string;
   createdAt: number;
   photoURL?: string;
+  lastMessage?: string;
+  lastMessageAt?: number;
+  lastMessageSenderId?: string;
+  lastMessageStatus?: 'sent' | 'delivered' | 'seen';
 }
 
 export interface Room {

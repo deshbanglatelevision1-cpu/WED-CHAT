@@ -6,11 +6,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { auth, loginWithGoogle, logout } from "./lib/firebase";
-import { subscribeToRooms, subscribeToMessages, createRoom, sendMessage, sendImageMessage, sendStructuredMessage, updateMessageStatus, markMessagesAsSeen, deleteMessage, getOrCreateUserProfile, searchUserByUniqueId, searchUserByEmail, searchUserByDisplayName, addContact, subscribeToUserProfile, fetchContactsProfiles, getOrCreate1on1Room, subscribeToStories, addStory, markStorySeen, addReaction, updateTypingStatus, subscribeToTypingStatus, subscribeToGroups, subscribeToCommunities, createGroup, joinGroupByCode, createCommunity, subscribeToGroupMessages, subscribeToAnnouncements, sendGroupMessage, sendAnnouncement } from "./lib/firestoreService";
+import { subscribeToRooms, subscribeToMessages, createRoom, sendMessage, sendImageMessage, sendStructuredMessage, updateMessageStatus, markMessagesAsSeen, deleteMessage, getOrCreateUserProfile, searchUserByUniqueId, searchUserByEmail, searchUserByDisplayName, addContact, subscribeToUserProfile, fetchContactsProfiles, getOrCreate1on1Room, subscribeToStories, addStory, markStorySeen, addReaction, updateTypingStatus, subscribeToTypingStatus, subscribeToGroups, subscribeToCommunities, createGroup, joinGroupByCode, createCommunity, subscribeToGroupMessages, subscribeToAnnouncements, sendGroupMessage, sendAnnouncement, updateUserProfile } from "./lib/firestoreService";
 import { encryptMessage, decryptMessage } from "./lib/encryption";
 import { getAIResponse, getSmartReplies, translateText, analyzeImage, generateAIImage, summarizeConversation, generateSpeech, magicRewrite } from "./lib/ai";
-import { Room, Message, UserProfile, Story, Group, Community } from "./types";
-import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2, Sparkles, BookOpen, BrainCircuit } from "lucide-react";
+import { AppTheme, Room, Message, UserProfile, Story, Group, Community } from "./types";
+import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2, Sparkles, BookOpen, BrainCircuit, Palette, Save, Trash, RotateCcw } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { format } from "date-fns";
 import clsx from "clsx";
@@ -26,6 +26,36 @@ const LANGUAGES = [
   "English", "Spanish", "French", "German", "Chinese", "Japanese", 
   "Korean", "Arabic", "Russian", "Portuguese", "Hindi", "Bengali",
   "Italian", "Turkish", "Vietnamese"
+];
+
+const DEFAULT_THEMES: AppTheme[] = [
+  {
+    id: "default-dark",
+    name: "Classic Deep",
+    premiumBlue: "#1A237E",
+    premiumBlueLight: "#283593",
+    masterRed: "#D32F2F",
+    bgDark: "#121212",
+    bgPanel: "#0A0E1A"
+  },
+  {
+    id: "midnight-neon",
+    name: "Midnight Neon",
+    premiumBlue: "#4F46E5",
+    premiumBlueLight: "#6366F1",
+    masterRed: "#F43F5E",
+    bgDark: "#0F172A",
+    bgPanel: "#1E293B"
+  },
+  {
+    id: "emerald-night",
+    name: "Emerald Night",
+    premiumBlue: "#059669",
+    premiumBlueLight: "#10B981",
+    masterRed: "#F59E0B",
+    bgDark: "#064E3B",
+    bgPanel: "#065F46"
+  }
 ];
 
 export default function App() {
@@ -63,6 +93,9 @@ export default function App() {
   const [isAIImageGenerating, setIsAIImageGenerating] = useState(false);
   const [isTTSPlaying, setIsTTSPlaying] = useState<string | null>(null);
   const [isMagicRewriting, setIsMagicRewriting] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState<AppTheme>(DEFAULT_THEMES[0]);
+  const [themeEditMode, setThemeEditMode] = useState(false);
+  const [customThemeName, setCustomThemeName] = useState("My Custom Theme");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [showMyQr, setShowMyQr] = useState(false);
@@ -92,6 +125,7 @@ export default function App() {
   const [selectedAIImage, setSelectedAIImage] = useState<File | null>(null);
   const [selectedAIImagePreview, setSelectedAIImagePreview] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'stories' | 'ai' | 'groups' | 'communities'>('chats');
+  const [profileTab, setProfileTab] = useState<'info' | 'theme'>('info');
   const [groups, setGroups] = useState<Group[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
@@ -140,28 +174,91 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (userProfile?.activeThemeId) {
+      const savedThemes = userProfile.customThemes || [];
+      const active = [...DEFAULT_THEMES, ...savedThemes].find(t => t.id === userProfile.activeThemeId);
+      if (active) setCurrentTheme(active);
+    }
+  }, [userProfile?.activeThemeId, userProfile?.customThemes]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--color-premium-blue', currentTheme.premiumBlue);
+    root.style.setProperty('--color-premium-blue-light', currentTheme.premiumBlueLight);
+    root.style.setProperty('--color-master-red', currentTheme.masterRed);
+    root.style.setProperty('--color-bg-dark', currentTheme.bgDark);
+    root.style.setProperty('--color-bg-panel', currentTheme.bgPanel);
+  }, [currentTheme]);
+
+  const handleSaveTheme = async () => {
+    if (!user || !userProfile) return;
+    
+    const isNew = !userProfile.customThemes?.find(t => t.id === currentTheme.id);
+    const updatedTheme = { ...currentTheme, name: customThemeName };
+    
+    let newThemes = [...(userProfile.customThemes || [])];
+    if (isNew) {
+      newThemes.push(updatedTheme);
+    } else {
+      newThemes = newThemes.map(t => t.id === currentTheme.id ? updatedTheme : t);
+    }
+
+    try {
+      await updateUserProfile(user.uid, {
+        customThemes: newThemes,
+        activeThemeId: updatedTheme.id
+      });
+      setCurrentTheme(updatedTheme);
+      setThemeEditMode(false);
+    } catch (err) {
+      console.error("Error saving theme:", err);
+    }
+  };
+
+  const handleSetTheme = async (theme: AppTheme) => {
+    setCurrentTheme(theme);
+    if (user) {
+      await updateUserProfile(user.uid, { activeThemeId: theme.id });
+    }
+  };
+
+  const handleDeleteTheme = async (themeId: string) => {
+    if (!user || !userProfile) return;
+    const newThemes = (userProfile.customThemes || []).filter(t => t.id !== themeId);
+    await updateUserProfile(user.uid, { customThemes: newThemes });
+  };
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        try {
-          const profile = await getOrCreateUserProfile({
-            uid: u.uid,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
-            email: u.email,
-          });
+        // FAST ID: Try to load from cache immediately
+        const cached = localStorage.getItem(`userProfile_${u.uid}`);
+        if (cached) {
+          try {
+            setUserProfile(JSON.parse(cached));
+          } catch (e) {}
+        }
+
+        // Fetch/Create profile in background
+        getOrCreateUserProfile({
+          uid: u.uid,
+          displayName: u.displayName,
+          photoURL: u.photoURL,
+          email: u.email,
+        }).then(profile => {
           if (profile) {
             setUserProfile(profile);
             setEditProfileName(profile.displayName);
             setEditProfileBio(profile.bio || "");
+            localStorage.setItem(`userProfile_${u.uid}`, JSON.stringify(profile));
           }
-        } catch (error: any) {
+        }).catch(error => {
           console.error("Profile fetch error:", error);
           if (error.message?.includes("offline")) {
             setIsFirebaseOffline(true);
             setLoginErrorMessage("Firebase Firestore is currently unreachable (Project is offline). This is usually a configuration error or network restriction.");
           }
-        }
+        });
       }
       setAuthInitialized(true);
     });
@@ -172,6 +269,7 @@ export default function App() {
     if (user) {
       const unsubscribeProfile = subscribeToUserProfile(user.uid, async (profile) => {
         setUserProfile(profile);
+        localStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(profile));
         if (profile.preferredLanguage) {
           setTargetLanguage(profile.preferredLanguage);
         }
@@ -728,14 +826,27 @@ export default function App() {
   };
 
   const handleUpdateProfile = async () => {
-    if (!user) return;
-    const { updateUserProfile } = await import("./lib/firestoreService");
-    await updateUserProfile(user.uid, {
-      displayName: editProfileName,
-      bio: editProfileBio,
-      preferredLanguage: targetLanguage,
-    });
-    setShowProfileEdit(false);
+    if (!user || !userProfile) return;
+    setIsUploading(true);
+    try {
+      const updates = {
+        displayName: editProfileName,
+        bio: editProfileBio,
+        preferredLanguage: targetLanguage,
+      };
+      await updateUserProfile(user.uid, updates);
+      
+      // Update local state and cache optimistically
+      const newProfile = { ...userProfile, ...updates };
+      setUserProfile(newProfile);
+      localStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(newProfile));
+      
+      setShowProfileEdit(false);
+    } catch (err: any) {
+      console.error("Error updating profile:", err);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleCreateGroup = async () => {
@@ -1149,7 +1260,13 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-premium-blue/30 transition-all">
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-premium-blue/30 transition-all cursor-pointer"
+                onClick={() => {
+                  setCurrentRoom({ id: 'AI_MASTER', name: '✨ AI Master', createdBy: 'system', createdAt: 0, isAI: true } as Room);
+                  setNewMessage("/imagine ");
+                  setIsSidebarOpen(false);
+                }}
+              >
                 <div className="flex gap-4">
                   <div className="w-12 h-12 rounded-2xl bg-premium-blue/20 flex items-center justify-center text-premium-blue flex-shrink-0 group-hover:scale-110 transition-transform">
                     <ImageIcon size={24} />
@@ -1161,7 +1278,19 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-orange-400/30 transition-all">
+              <div className="bg-bg-panel border border-white/5 p-5 rounded-3xl group hover:border-orange-400/30 transition-all cursor-pointer"
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = (e) => {
+                    handleAIImageSelect(e as any);
+                    setCurrentRoom({ id: 'AI_MASTER', name: '✨ AI Master', createdBy: 'system', createdAt: 0, isAI: true } as Room);
+                    setIsSidebarOpen(false);
+                  };
+                  input.click();
+                }}
+              >
                 <div className="flex gap-4">
                   <div className="w-12 h-12 rounded-2xl bg-orange-400/20 flex items-center justify-center text-orange-400 flex-shrink-0 group-hover:scale-110 transition-transform">
                     <BrainCircuit size={24} />
@@ -2551,6 +2680,22 @@ export default function App() {
                   <Paperclip size={22} className={clsx(showAttachmentMenu && "-rotate-45 transition-transform")} />
                 </button>
               )}
+              {currentRoom.id === 'AI_MASTER' && (
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.onchange = (e) => handleAIImageSelect(e as any);
+                    input.click();
+                  }}
+                  className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-500 flex-shrink-0"
+                  title="Upload Image for AI Vision"
+                >
+                  <ImageIcon size={22} />
+                </button>
+              )}
               <div className="flex-1 relative flex items-center">
                 {isRecording ? (
                   <div className="flex-1 flex items-center justify-between bg-[#1A2332]/50 border border-master-red/50 rounded-3xl px-5 py-3 shadow-inner overflow-hidden">
@@ -3061,103 +3206,257 @@ export default function App() {
       {/* Profile Edit Modal */}
       {showProfileEdit && user && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[110] flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-[#1A2332] border border-white/10 p-6 rounded-3xl max-w-sm w-full shadow-2xl relative overflow-hidden glassmorphism">
+          <div className="bg-[#1A2332] border border-white/10 p-0 rounded-3xl max-w-sm w-full shadow-2xl relative overflow-hidden glassmorphism flex flex-col max-h-[90vh]">
              {/* Decorative header */}
              <div className="absolute top-0 left-0 right-0 h-28 bg-gradient-to-b from-premium-blue/30 to-transparent -z-10" />
             
-             <div className="flex justify-between items-center mb-6">
+             <div className="flex justify-between items-center p-6 pb-2">
                 <h3 className="text-xl font-bold text-white flex items-center gap-2">
                    <Smile size={20} className="text-premium-blue" />
-                   Profile Settings
+                   Settings
                 </h3>
                 <button onClick={() => setShowProfileEdit(false)} className="p-2 hover:bg-white/10 rounded-full text-gray-400">
                    <X size={20} />
                 </button>
              </div>
 
-              <div className="flex flex-col items-center mb-6">
-                <div className="relative group">
-                  <div className="w-24 h-24 rounded-full border-4 border-[#1A2332] overflow-hidden shadow-2xl relative transition-transform hover:scale-105">
-                    <img 
-                      src={userProfile?.photoURL || user.photoURL || `https://ui-avatars.com/api/?name=${userProfile?.displayName || user.displayName || 'User'}&background=1A237E&color=fff`} 
-                      alt="Profile" 
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    <label className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 cursor-pointer transition-all">
-                      <ImageIcon className="text-white mb-1" size={24} />
-                      <span className="text-[10px] text-white font-bold uppercase">Change</span>
-                      <input type="file" className="hidden" accept="image/*" onChange={handleProfileImageChange} />
-                    </label>
+             {/* Tab Buttons */}
+             <div className="flex px-6 gap-4 border-b border-white/5">
+                <button 
+                  onClick={() => setProfileTab('info')}
+                  className={clsx("pb-3 text-xs font-black uppercase tracking-widest transition-all relative", profileTab === 'info' ? "text-premium-blue" : "text-gray-500 hover:text-gray-300")}
+                >
+                  Profile Info
+                  {profileTab === 'info' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-premium-blue rounded-full" />}
+                </button>
+                <button 
+                  onClick={() => setProfileTab('theme')}
+                  className={clsx("pb-3 text-xs font-black uppercase tracking-widest transition-all relative", profileTab === 'theme' ? "text-premium-blue" : "text-gray-500 hover:text-gray-300")}
+                >
+                  App Theme
+                  {profileTab === 'theme' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-premium-blue rounded-full" />}
+                </button>
+             </div>
+
+             <div className="overflow-y-auto custom-scrollbar p-6 pt-4">
+              {profileTab === 'info' ? (
+                <>
+                  <div className="flex flex-col items-center mb-6">
+                    <div className="relative group">
+                      <div className="w-24 h-24 rounded-full border-4 border-[#1A2332] overflow-hidden shadow-2xl relative transition-transform hover:scale-105">
+                        <img 
+                          src={userProfile?.photoURL || user.photoURL || `https://ui-avatars.com/api/?name=${userProfile?.displayName || user.displayName || 'User'}&background=1A237E&color=fff`} 
+                          alt="Profile" 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <label className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 cursor-pointer transition-all">
+                          <ImageIcon className="text-white mb-1" size={24} />
+                          <span className="text-[10px] text-white font-bold uppercase">Change</span>
+                          <input type="file" className="hidden" accept="image/*" onChange={handleProfileImageChange} />
+                        </label>
+                      </div>
+                      {isUploading && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full z-10">
+                          <div className="w-8 h-8 border-2 border-premium-blue border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="text-xs font-mono bg-master-red px-2 py-0.5 rounded text-white shadow-sm border border-white/10 uppercase tracking-tighter">
+                        ID: {userProfile?.uniqueId || "LOADING..."}
+                      </div>
+                    </div>
                   </div>
-                  {isUploading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full z-10">
-                      <div className="w-8 h-8 border-2 border-premium-blue border-t-transparent rounded-full animate-spin" />
+
+                  <div className="space-y-5">
+                    <div>
+                      <div className="flex justify-between items-center mb-1.5 px-1">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em]">Display Name</label>
+                        <span className={clsx("text-[9px] font-bold", editProfileName.length > 25 ? "text-red-400" : "text-gray-500")}>
+                          {editProfileName.length}/25
+                        </span>
+                      </div>
+                      <input 
+                        type="text" 
+                        value={editProfileName}
+                        onChange={(e) => setEditProfileName(e.target.value.slice(0, 25))}
+                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-medium focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all placeholder:text-gray-600 shadow-inner"
+                        placeholder="Your display name..."
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-center mb-1.5 px-1">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em]">Bio / About</label>
+                        <span className={clsx("text-[9px] font-bold", editProfileBio.length > 150 ? "text-red-400" : "text-gray-500")}>
+                          {editProfileBio.length}/150
+                        </span>
+                      </div>
+                      <textarea 
+                        value={editProfileBio}
+                        onChange={(e) => setEditProfileBio(e.target.value.slice(0, 150))}
+                        rows={4}
+                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all resize-none placeholder:text-gray-600 shadow-inner"
+                        placeholder="Write something about yourself..."
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em] mb-1.5 block px-1">Translation Language</label>
+                      <div className="relative">
+                        <select 
+                          value={targetLanguage}
+                          onChange={(e) => setTargetLanguage(e.target.value)}
+                          className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white appearance-none cursor-pointer focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all"
+                        >
+                          {LANGUAGES.map(lang => (
+                            <option key={lang} value={lang} className="bg-[#1A2332]">{lang}</option>
+                          ))}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                          <Languages size={16} />
+                        </div>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={handleUpdateProfile}
+                      className="w-full bg-gradient-to-r from-premium-blue to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-extrabold py-4 rounded-xl shadow-[0_0_20px_rgba(33,150,243,0.3)] transition-all transform hover:scale-[1.01] active:scale-95 mt-2 uppercase tracking-widest text-xs"
+                    >
+                      Apply Changes
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-6">
+                  {/* Preset Themes */}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Preset Themes</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[...DEFAULT_THEMES, ...(userProfile?.customThemes || [])].map((theme) => (
+                        <div 
+                          key={theme.id}
+                          onClick={() => handleSetTheme(theme)}
+                          className={clsx(
+                            "relative p-3 rounded-2xl border-2 transition-all cursor-pointer group flex flex-col gap-2 overflow-hidden",
+                            currentTheme.id === theme.id ? "border-premium-blue bg-premium-blue/10" : "border-white/5 bg-white/5 hover:border-white/20"
+                          )}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-white truncate max-w-[80%]">{theme.name}</span>
+                            {currentTheme.id === theme.id && <Check size={12} className="text-premium-blue" />}
+                          </div>
+                          <div className="flex gap-1 h-2 rounded-full overflow-hidden">
+                            <div style={{ backgroundColor: theme.premiumBlue }} className="flex-1" />
+                            <div style={{ backgroundColor: theme.masterRed }} className="flex-1" />
+                            <div style={{ backgroundColor: theme.bgDark }} className="flex-1" />
+                          </div>
+                          {!DEFAULT_THEMES.find(t => t.id === theme.id) && (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTheme(theme.id);
+                              }}
+                              className="absolute top-1 right-1 p-1 bg-master-red/20 text-master-red rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash size={10} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <div 
+                        onClick={() => {
+                          const newId = `custom-${Date.now()}`;
+                          setCurrentTheme({
+                            ...currentTheme,
+                            id: newId,
+                            name: "New Custom Theme"
+                          });
+                          setCustomThemeName("New Custom Theme");
+                          setThemeEditMode(true);
+                        }}
+                        className="p-3 rounded-2xl border-2 border-dashed border-white/10 hover:border-premium-blue/50 bg-white/5 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all text-gray-500 hover:text-premium-blue"
+                      >
+                        <Palette size={20} />
+                        <span className="text-[10px] font-bold">New Custom</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Custom Theme Editor */}
+                  {themeEditMode && (
+                    <div className="space-y-4 pt-4 border-t border-white/5 animate-in slide-in-from-bottom-2">
+                       <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-black text-white uppercase tracking-widest">Editor</h4>
+                          <button onClick={() => setThemeEditMode(false)} className="text-[10px] text-gray-500 hover:text-white uppercase font-bold">Cancel</button>
+                       </div>
+                       
+                       <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Theme Name</label>
+                          <input 
+                            type="text" 
+                            value={customThemeName}
+                            onChange={(e) => setCustomThemeName(e.target.value)}
+                            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-premium-blue"
+                          />
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-4">
+                          {[
+                            { label: 'Primary', key: 'premiumBlue' as keyof AppTheme },
+                            { label: 'Accent', key: 'premiumBlueLight' as keyof AppTheme },
+                            { label: 'Master Red', key: 'masterRed' as keyof AppTheme },
+                            { label: 'Background', key: 'bgDark' as keyof AppTheme },
+                            { label: 'Panel', key: 'bgPanel' as keyof AppTheme },
+                          ].map((field) => (
+                            <div key={field.key}>
+                               <label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">{field.label}</label>
+                               <div className="flex items-center gap-2">
+                                  <input 
+                                    type="color" 
+                                    value={currentTheme[field.key] as string}
+                                    onChange={(e) => setCurrentTheme({...currentTheme, [field.key]: e.target.value})}
+                                    className="w-8 h-8 rounded-lg overflow-hidden bg-transparent border-none cursor-pointer p-0"
+                                  />
+                                  <span className="text-[10px] font-mono text-gray-400 uppercase">{currentTheme[field.key] as string}</span>
+                               </div>
+                            </div>
+                          ))}
+                       </div>
+
+                       <button 
+                        onClick={handleSaveTheme}
+                        className="w-full py-3 bg-premium-blue text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-blue-900/40 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                       >
+                         <Save size={14} /> Save My Theme
+                       </button>
+                    </div>
+                  )}
+
+                  {!themeEditMode && (
+                    <div className="pt-4 border-t border-white/5">
+                      <div className="p-4 rounded-3xl bg-premium-blue/5 border border-premium-blue/10">
+                        <div className="flex items-start gap-4">
+                          <div className="p-3 rounded-2xl bg-premium-blue/20 text-premium-blue">
+                             <Sparkles size={20} />
+                          </div>
+                          <div>
+                            <h5 className="text-sm font-bold text-white mb-1">Theme Preview</h5>
+                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                              Your selected theme is applied globally across the entire NAM Chat interface instantly.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setThemeEditMode(true)}
+                        className="w-full mt-4 py-3 border border-white/10 text-gray-400 hover:text-white hover:border-white/20 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                         <RotateCcw size={12} /> Edit Current Theme
+                      </button>
                     </div>
                   )}
                 </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <div className="text-xs font-mono bg-master-red px-2 py-0.5 rounded text-white shadow-sm border border-white/10 uppercase tracking-tighter">
-                    ID: {userProfile?.uniqueId || "LOADING..."}
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div>
-                  <div className="flex justify-between items-center mb-1.5 px-1">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em]">Display Name</label>
-                    <span className={clsx("text-[9px] font-bold", editProfileName.length > 25 ? "text-red-400" : "text-gray-500")}>
-                      {editProfileName.length}/25
-                    </span>
-                  </div>
-                  <input 
-                    type="text" 
-                    value={editProfileName}
-                    onChange={(e) => setEditProfileName(e.target.value.slice(0, 25))}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-medium focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all placeholder:text-gray-600 shadow-inner"
-                    placeholder="Your display name..."
-                  />
-                </div>
-                <div>
-                  <div className="flex justify-between items-center mb-1.5 px-1">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em]">Bio / About</label>
-                    <span className={clsx("text-[9px] font-bold", editProfileBio.length > 150 ? "text-red-400" : "text-gray-500")}>
-                      {editProfileBio.length}/150
-                    </span>
-                  </div>
-                  <textarea 
-                    value={editProfileBio}
-                    onChange={(e) => setEditProfileBio(e.target.value.slice(0, 150))}
-                    rows={4}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all resize-none placeholder:text-gray-600 shadow-inner"
-                    placeholder="Write something about yourself..."
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em] mb-1.5 block px-1">Translation Language</label>
-                  <div className="relative">
-                    <select 
-                      value={targetLanguage}
-                      onChange={(e) => setTargetLanguage(e.target.value)}
-                      className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white appearance-none cursor-pointer focus:border-premium-blue focus:ring-1 focus:ring-premium-blue/50 outline-none transition-all"
-                    >
-                      {LANGUAGES.map(lang => (
-                        <option key={lang} value={lang} className="bg-[#1A2332]">{lang}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                      <Languages size={16} />
-                    </div>
-                  </div>
-                </div>
-                <button 
-                  onClick={handleUpdateProfile}
-                  className="w-full bg-gradient-to-r from-premium-blue to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-extrabold py-4 rounded-xl shadow-[0_0_20px_rgba(33,150,243,0.3)] transition-all transform hover:scale-[1.01] active:scale-95 mt-2 uppercase tracking-widest text-xs"
-                >
-                  Apply Changes
-                </button>
-              </div>
+              )}
+             </div>
           </div>
         </div>
       )}

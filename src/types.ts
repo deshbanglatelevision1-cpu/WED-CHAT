@@ -1,3 +1,13 @@
+export interface AppTheme {
+  id: string;
+  name: string;
+  premiumBlue: string;
+  premiumBlueLight: string;
+  masterRed: string;
+  bgDark: string;
+  bgPanel: string;
+}
+
 export interface UserProfile {
   uid: string;
   displayName: string;
@@ -7,6 +17,8 @@ export interface UserProfile {
   preferredLanguage?: string;
   uniqueId: string;
   contacts: string[];
+  customThemes?: AppTheme[];
+  activeThemeId?: string;
 }
 
 export interface User {

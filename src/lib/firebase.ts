@@ -58,11 +58,11 @@ const getFirebaseConfig = () => {
 
     // 3. Final Fallback to local config
     if (isLocalValid) {
-        console.log("Using bootstrapped Firebase config (firebase-applet-config.json)");
+        console.log(`[Firebase Diagnostics] Using bootstrapped config for project: ${localConfig.projectId}`);
         return localConfig;
     }
 
-    console.warn("No valid Firebase configuration found. Please run set_up_firebase.");
+    console.warn("[Firebase Diagnostics] No valid Firebase configuration found. Please check firebase-applet-config.json or run set_up_firebase.");
     return localConfig;
 };
 
@@ -95,7 +95,7 @@ console.log(`[Firebase Diagnostics] Initializing Firestore.
 
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-  // Increase timeout for slow connections often found in preview environments
+  // We use long polling to avoid WebSocket issues in some preview environments
 }, databaseId);
 
 export const storage = getStorage(app);

@@ -6,11 +6,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { auth, loginWithGoogle, logout } from "./lib/firebase";
-import { subscribeToRooms, subscribeToMessages, createRoom, sendMessage, sendImageMessage, sendStructuredMessage, updateMessageStatus, markMessagesAsSeen, deleteMessage, getOrCreateUserProfile, searchUserByUniqueId, searchUserByEmail, searchUserByDisplayName, addContact, subscribeToUserProfile, fetchContactsProfiles, getOrCreate1on1Room, subscribeToStories, addStory, markStorySeen, addReaction, updateTypingStatus, subscribeToTypingStatus, subscribeToGroups, subscribeToCommunities, createGroup, joinGroupByCode, createCommunity, subscribeToGroupMessages, subscribeToAnnouncements, sendGroupMessage, sendAnnouncement, updateUserProfile } from "./lib/firestoreService";
+import { subscribeToRooms, subscribeToMessages, createRoom, sendMessage, sendImageMessage, sendStructuredMessage, updateMessageStatus, markMessagesAsSeen, deleteMessage, getOrCreateUserProfile, searchUserByUniqueId, searchUserByEmail, searchUserByDisplayName, addContact, subscribeToUserProfile, fetchContactsProfiles, getOrCreate1on1Room, subscribeToStories, addStory, markStorySeen, addReaction, updateTypingStatus, subscribeToTypingStatus, subscribeToGroups, subscribeToCommunities, createGroup, joinGroupByCode, createCommunity, subscribeToGroupMessages, subscribeToAnnouncements, sendGroupMessage, sendAnnouncement, updateUserProfile, fetchRandomProfiles, fetchRandomGroups } from "./lib/firestoreService";
 import { encryptMessage, decryptMessage } from "./lib/encryption";
-import { getAIResponse, getSmartReplies, translateText, analyzeImage, generateAIImage, summarizeConversation, generateSpeech, magicRewrite } from "./lib/ai";
+import { getAIResponse, getSmartReplies, translateText, analyzeImage, generateAIImage, summarizeConversation, generateSpeech, magicRewrite, getAISuggestions } from "./lib/ai";
 import { AppTheme, Room, Message, UserProfile, Story, Group, Community } from "./types";
-import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2, Sparkles, BookOpen, BrainCircuit, Palette, Save, Trash, RotateCcw } from "lucide-react";
+import { MessageCircle, Menu, X, Send, Lock, Plus, LogOut, Key, Bot, Image as ImageIcon, Check, CheckCheck, UserPlus, Search, Paperclip, Mic, Smile, QrCode, Volume2, Copy, Scissors, Trash2, MousePointer2, Languages, Sticker, Users, Shield, UserCircle2, Sparkles, BookOpen, BrainCircuit, Palette, Save, Trash, RotateCcw, Compass } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { format } from "date-fns";
 import clsx from "clsx";
@@ -62,6 +62,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [contactProfiles, setContactProfiles] = useState<UserProfile[]>([]);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
@@ -124,11 +125,13 @@ export default function App() {
 
   const [selectedAIImage, setSelectedAIImage] = useState<File | null>(null);
   const [selectedAIImagePreview, setSelectedAIImagePreview] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'chats' | 'stories' | 'ai' | 'groups' | 'communities'>('chats');
+  const [activeTab, setActiveTab] = useState<'chats' | 'stories' | 'ai' | 'groups' | 'communities' | 'discovery'>('chats');
   const [profileTab, setProfileTab] = useState<'info' | 'theme'>('info');
   const [groups, setGroups] = useState<Group[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [discoverySuggestions, setDiscoverySuggestions] = useState<{ users: UserProfile[]; groups: Group[]; reasoning: string } | null>(null);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [showCreateCommunity, setShowCreateCommunity] = useState(false);
   const [showJoinByCode, setShowJoinByCode] = useState(false);
   const [joinCode, setJoinCode] = useState("");
@@ -231,15 +234,18 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        // FAST ID: Try to load from cache immediately
+        // FAST ID: Try to load from cache immediately using UID
         const cached = localStorage.getItem(`userProfile_${u.uid}`);
         if (cached) {
           try {
-            setUserProfile(JSON.parse(cached));
+            const profile = JSON.parse(cached);
+            setUserProfile(profile);
+            setEditProfileName(profile.displayName);
+            setEditProfileBio(profile.bio || "");
           } catch (e) {}
         }
 
-        // Fetch/Create profile in background
+        // Fetch/Create profile in background to keep it synced
         getOrCreateUserProfile({
           uid: u.uid,
           displayName: u.displayName,
@@ -251,16 +257,20 @@ export default function App() {
             setEditProfileName(profile.displayName);
             setEditProfileBio(profile.bio || "");
             localStorage.setItem(`userProfile_${u.uid}`, JSON.stringify(profile));
+            localStorage.setItem('lastActiveUid', u.uid);
           }
         }).catch(error => {
           console.error("Profile fetch error:", error);
-          if (error.message?.includes("offline")) {
+          if (error.message?.includes("offline") || error.message?.includes("unavailable")) {
             setIsFirebaseOffline(true);
-            setLoginErrorMessage("Firebase Firestore is currently unreachable (Project is offline). This is usually a configuration error or network restriction.");
+            setLoginErrorMessage("Nameweb Chat is having trouble reaching the database. Your ID and chats are saved locally and will sync when connection is restored.");
           }
         });
+      } else {
+        localStorage.removeItem('lastActiveUid');
       }
       setAuthInitialized(true);
+      setAuthRestoring(false);
     });
     return () => unsubscribe();
   }, []);
@@ -489,7 +499,7 @@ export default function App() {
 
     setIsAITyping(true);
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       text: "Analyzing image...",
       imageUrl: imageUrl,
       senderId: user.uid,
@@ -509,7 +519,7 @@ export default function App() {
         const analysis = await analyzeImage(base64, "Tell me about this image in detail.");
         setIsAITyping(false);
         const aiMsg: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           text: analysis,
           senderId: 'ai',
           senderName: 'AI Master',
@@ -531,7 +541,7 @@ export default function App() {
     setIsAIImageGenerating(true);
     
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       text: `Generate image: ${prompt}`,
       senderId: user.uid,
       senderName: user.displayName || "You",
@@ -546,7 +556,7 @@ export default function App() {
       setIsAITyping(false);
       if (imageUrl) {
         const aiMsg: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           text: "Here is your generated image ✨",
           imageUrl: imageUrl,
           senderId: 'ai',
@@ -558,7 +568,7 @@ export default function App() {
         setAiMessages(prev => [...prev, aiMsg]);
       } else {
         const aiMsg: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           text: "I couldn't generate that image. Maybe try a simpler prompt?",
           senderId: 'ai',
           senderName: 'AI Master',
@@ -626,7 +636,7 @@ export default function App() {
       setReplyTarget(null);
 
       const userMsg: Message = {
-        id: Date.now().toString(),
+        id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         text: messageText,
         imageUrl: imageToAnalyze || undefined,
         senderId: user.uid,
@@ -642,7 +652,7 @@ export default function App() {
           const analysis = await analyzeImage(imageToAnalyze, messageText || "Analyze this image in detail.");
           setIsAITyping(false);
           const aiMsg: Message = {
-            id: (Date.now() + 1).toString(),
+            id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             text: analysis,
             senderId: 'ai',
             senderName: 'AI Master',
@@ -675,7 +685,7 @@ export default function App() {
       setIsAITyping(false);
       
       const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `ai-msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         text: aiReply,
         senderId: 'ai',
         senderName: 'AI Master',
@@ -848,6 +858,43 @@ export default function App() {
       setIsUploading(false);
     }
   };
+
+  const handleGenerateDiscovery = async () => {
+    if (!user || !userProfile) return;
+    setIsGeneratingSuggestions(true);
+    try {
+      const profiles = await fetchRandomProfiles(user.uid, 20);
+      const allGroups = await fetchRandomGroups(user.uid, 15);
+      
+      const snippets = messages.slice(-10).map(m => m.text || "").filter(t => t.length > 0);
+      
+      const result = await getAISuggestions(
+        userProfile.bio || "Friendly user looking to connect.",
+        snippets,
+        profiles.map(p => ({ uid: p.uid, displayName: p.displayName, bio: p.bio })),
+        allGroups.map(g => ({ id: g.id, name: g.name, description: g.description }))
+      );
+
+      const suggestedUsers = profiles.filter(p => result.suggestedUserUids.includes(p.uid));
+      const suggestedGroups = allGroups.filter(g => result.suggestedGroupIds.includes(g.id));
+
+      setDiscoverySuggestions({
+        users: suggestedUsers,
+        groups: suggestedGroups,
+        reasoning: result.reasoning
+      });
+    } catch (err) {
+      console.error("Discovery error:", err);
+    } finally {
+      setIsGeneratingSuggestions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'discovery' && !discoverySuggestions && !isGeneratingSuggestions) {
+      handleGenerateDiscovery();
+    }
+  }, [activeTab]);
 
   const handleCreateGroup = async () => {
     if (!user || !groupName.trim() || selectedContactsForGroup.length === 0) return;
@@ -1477,6 +1524,159 @@ export default function App() {
              </div>
           </div>
         );
+      case 'discovery':
+        return (
+          <div className="flex flex-col h-full bg-bg-dark/40">
+            <div className="p-4 border-b border-white/10 bg-white/5 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-premium-blue-light">
+                <Compass size={20} />
+                <h2 className="font-bold text-lg">AI Discovery</h2>
+              </div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-black">Find your next favorite connection</p>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              {isGeneratingSuggestions ? (
+                <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+                  <div className="relative">
+                    <div className="w-16 h-16 border-2 border-premium-blue border-t-transparent rounded-full animate-spin"></div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Compass size={24} className="text-premium-blue" />
+                    </div>
+                    <Sparkles size={16} className="absolute -top-1 -right-1 text-yellow-400 animate-pulse" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-premium-blue-light">Consulting the AI Matchmaker...</p>
+                    <p className="text-xs text-gray-500">Analyzing interests and connections</p>
+                  </div>
+                </div>
+              ) : discoverySuggestions ? (
+                <div className="space-y-8 pb-10 animate-in fade-in duration-500">
+                  {/* Reasoning Card */}
+                  <div className="bg-premium-blue/10 border border-premium-blue/20 p-4 rounded-2xl relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
+                      <BrainCircuit size={48} className="text-premium-blue" />
+                    </div>
+                    <div className="flex items-center gap-2 mb-2 text-premium-blue-light">
+                      <Bot size={16} />
+                      <span className="text-[10px] font-black uppercase tracking-tighter">AI Analysis</span>
+                    </div>
+                    <p className="text-sm text-blue-100/90 leading-relaxed italic">"{discoverySuggestions.reasoning}"</p>
+                  </div>
+
+                  {/* Suggested Users */}
+                  {discoverySuggestions.users.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1">
+                        <Users size={12} /> People you might like
+                      </h3>
+                      {discoverySuggestions.users.map(profile => (
+                        <div 
+                          key={profile.uid}
+                          className="bg-white/5 border border-white/5 p-3 rounded-2xl flex items-center gap-3 hover:bg-white/10 hover:border-white/20 transition-all cursor-pointer group"
+                          onClick={() => setViewingUserProfile(profile)}
+                        >
+                          <div className="relative">
+                            {profile.photoURL ? (
+                              <img src={profile.photoURL} alt="" className="w-12 h-12 rounded-full object-cover border border-white/10" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-full bg-premium-blue-light/20 flex items-center justify-center font-bold text-premium-blue-light text-lg">
+                                {profile.displayName.charAt(0)}
+                              </div>
+                            )}
+                            <div className="absolute -bottom-1 -right-1 bg-green-500 w-3 h-3 rounded-full border-2 border-bg-dark"></div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="font-bold text-white text-sm truncate">{profile.displayName}</h4>
+                              <div className="text-[8px] font-black bg-master-red text-white px-1 rounded-sm uppercase tracking-tighter">{profile.uniqueId}</div>
+                            </div>
+                            <p className="text-[11px] text-gray-500 truncate mt-0.5">{profile.bio || "No bio yet"}</p>
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              open1on1Room(profile);
+                              setIsSidebarOpen(false);
+                            }}
+                            className="p-2.5 bg-premium-blue/10 text-premium-blue-light rounded-xl hover:bg-premium-blue hover:text-white transition-all transform group-hover:scale-110"
+                          >
+                            <MessageCircle size={18} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Suggested Groups */}
+                  {discoverySuggestions.groups.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1">
+                        <Users size={12} /> Groups to join
+                      </h3>
+                      {discoverySuggestions.groups.map(group => (
+                        <div 
+                          key={group.id}
+                          className="bg-white/5 border border-white/5 p-3 rounded-2xl flex items-center gap-3 hover:bg-white/10 hover:border-white/20 transition-all cursor-pointer group"
+                        >
+                          <div className="w-12 h-12 rounded-xl bg-master-red/10 border border-master-red/20 flex items-center justify-center text-master-red group-hover:bg-master-red group-hover:text-white transition-colors">
+                            <Users size={24} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-white text-sm truncate">{group.name}</h4>
+                            <p className="text-[11px] text-gray-500 truncate mt-0.5">{group.description || "Active community group"}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[9px] bg-white/5 text-gray-400 px-1.5 py-0.5 rounded-full font-bold">{group.memberIds.length} members</span>
+                            </div>
+                          </div>
+                          <button 
+                             onClick={() => {
+                               setCurrentRoom({
+                                 id: group.id,
+                                 name: group.name,
+                                 type: 'group',
+                                 participants: group.memberIds,
+                                 createdBy: group.adminIds[0],
+                                 createdAt: group.createdAt
+                               });
+                               setIsSidebarOpen(false);
+                             }}
+                             className="px-3 py-1.5 bg-master-red/10 text-master-red border border-master-red/20 rounded-lg text-[10px] font-black uppercase tracking-tighter hover:bg-master-red hover:text-white transition-all"
+                          >
+                            Explore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Refresh Button */}
+                  <button 
+                    onClick={handleGenerateDiscovery}
+                    className="w-full py-4 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center gap-2 text-gray-500 hover:text-premium-blue-light hover:border-premium-blue-light/50 transition-all group"
+                  >
+                    <RotateCcw size={20} className="group-hover:rotate-180 transition-transform duration-700" />
+                    <span className="text-xs font-bold uppercase tracking-widest">Refresh Suggestions</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+                  <div className="w-20 h-20 bg-premium-blue/10 rounded-full flex items-center justify-center mb-6">
+                    <Compass size={40} className="text-premium-blue opacity-40" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">Discovery is ready!</h3>
+                  <p className="text-sm text-gray-500 mb-8 max-w-[200px]">The AI will analyze your activity to find perfect matches.</p>
+                  <button 
+                    onClick={handleGenerateDiscovery}
+                    className="w-full py-3 bg-premium-blue text-white rounded-xl font-bold hover:bg-premium-blue-light transition-all shadow-lg"
+                  >
+                    Generate Matches
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
       default:
         return null;
     }
@@ -1789,7 +1989,9 @@ export default function App() {
                   title="Unique Chat ID - Click for QR"
                 >
                   <span className="text-[9px] font-black uppercase tracking-tighter opacity-60">ID:</span>
-                  <span className="text-[11px] font-mono font-bold tracking-tight">{userProfile?.uniqueId || "Syncing..."}</span>
+                  <span className="text-[11px] font-mono font-bold tracking-tight">
+                    {userProfile?.uniqueId ? userProfile.uniqueId : (isFirebaseOffline ? "Offline" : "Syncing...")}
+                  </span>
                   <QrCode size={10} className="ml-auto opacity-40 group-hover:opacity-100 transition-opacity" />
                 </button>
               </div>
@@ -1965,6 +2167,13 @@ export default function App() {
             >
               <Bot size={20} />
               <span className="text-[10px] font-bold">AI</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('discovery')}
+              className={clsx("p-2 rounded-xl flex flex-col items-center gap-1 transition-all flex-1", activeTab === 'discovery' ? "text-green-400 bg-green-400/10 scale-105" : "text-gray-500 hover:text-white")}
+            >
+              <Compass size={20} />
+              <span className="text-[10px] font-bold">Discovery</span>
             </button>
         </div>
       </div>

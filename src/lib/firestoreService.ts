@@ -263,15 +263,44 @@ export const getOrCreateUserProfile = async (user: {uid: string, displayName: st
     const profileSnap = await getDoc(profileRef);
     if (profileSnap.exists()) {
       const data = profileSnap.data() as UserProfile;
+      let needsUpdate = false;
+      const updates: any = {};
+
+      // Ensure uniqueId exists for existing profiles
+      if (!data.uniqueId) {
+        let uniqueId = '';
+        let idExists = true;
+        while(idExists) {
+          const code = Math.floor(10000 + Math.random() * 90000);
+          uniqueId = `DB-${code}`;
+          const idRef = doc(db, 'user_ids', uniqueId);
+          const idSnap = await getDoc(idRef);
+          if (!idSnap.exists()) {
+            idExists = false;
+            await setDoc(idRef, { uid: user.uid });
+          }
+        }
+        updates.uniqueId = uniqueId;
+        data.uniqueId = uniqueId;
+        needsUpdate = true;
+      }
+
       // Update photoURL if it's missing or changed and the user logged in with a photo
       if (user.photoURL && data.photoURL !== user.photoURL) {
-        await updateDoc(profileRef, { photoURL: user.photoURL });
+        updates.photoURL = user.photoURL;
         data.photoURL = user.photoURL;
+        needsUpdate = true;
       }
+
       // Update email if missing
       if (user.email && !data.email) {
-        await updateDoc(profileRef, { email: user.email.toLowerCase() });
+        updates.email = user.email.toLowerCase();
         (data as any).email = user.email.toLowerCase();
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        await updateDoc(profileRef, updates);
       }
       return data;
     }
@@ -864,4 +893,27 @@ export const subscribeToTypingStatus = (roomId: string, callback: (typingUsers: 
     // Silently handle or log typing errors
     console.warn("Typing status subscription error:", error);
   });
+};
+
+export const fetchRandomProfiles = async (excludeUid: string, limitCount: number = 10): Promise<UserProfile[]> => {
+  try {
+    const q = query(collection(db, 'userProfiles'), where('uid', '!=', excludeUid), limit(limitCount));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as UserProfile);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'userProfiles');
+    return [];
+  }
+};
+
+export const fetchRandomGroups = async (userId: string, limitCount: number = 10): Promise<Group[]> => {
+  try {
+    const q = query(collection(db, 'groups'), limit(limitCount * 2));
+    const snapshot = await getDocs(q);
+    const groups = snapshot.docs.map(doc => mapDocData<Group>(doc));
+    return groups.filter(g => !g.memberIds.includes(userId)).slice(0, limitCount);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'groups');
+    return [];
+  }
 };

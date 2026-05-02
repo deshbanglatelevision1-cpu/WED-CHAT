@@ -149,3 +149,55 @@ export const magicRewrite = async (text: string, tone: string = "more profession
     return text;
   }
 };
+
+export const getAISuggestions = async (
+  userBio: string,
+  chatSnippets: string[],
+  availableProfiles: { uid: string; displayName: string; bio?: string }[],
+  availableGroups: { id: string; name: string; description?: string }[]
+): Promise<{ suggestedUserUids: string[]; suggestedGroupIds: string[]; reasoning: string }> => {
+  try {
+    const prompt = `
+      You are an AI Matchmaker for a chat app called NAM Chat.
+      
+      User Profile Bio: "${userBio}"
+      Recent Chat Snippets: ${JSON.stringify(chatSnippets)}
+      
+      Potential Contacts: ${JSON.stringify(availableProfiles)}
+      Potential Groups: ${JSON.stringify(availableGroups)}
+      
+      Task:
+      Recommend up to 3 users and 2 groups that the user would be interested in.
+      Basing suggestions on:
+      1. Shared interests found in chat history or bio.
+      2. Professional or social compatibility.
+      
+      Return a JSON object with:
+      - suggestedUserUids: string[]
+      - suggestedGroupIds: string[]
+      - reasoning: string (a short, friendly message explaining why these were picked)
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            suggestedUserUids: { type: Type.ARRAY, items: { type: Type.STRING } },
+            suggestedGroupIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+            reasoning: { type: Type.STRING }
+          },
+          required: ["suggestedUserUids", "suggestedGroupIds", "reasoning"]
+        }
+      }
+    });
+
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("AI Suggestions Error:", error);
+    return { suggestedUserUids: [], suggestedGroupIds: [], reasoning: "I couldn't find any suggestions right now." };
+  }
+};

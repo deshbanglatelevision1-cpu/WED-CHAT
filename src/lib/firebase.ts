@@ -21,30 +21,32 @@ const getFirebaseConfig = () => {
     // 1. Start with the local config as the base truth for AI Studio apps
     // This file is bootstrapped and managed by the platform.
     const localConfig = rawFirebaseConfig as any;
-    const isLocalValid = localConfig && localConfig.apiKey && !localConfig.apiKey.includes('remixed');
+    // Note: We check if it's valid (not placeholder)
+    const isLocalValid = localConfig && localConfig.apiKey && !localConfig.apiKey.includes('remixed') && localConfig.apiKey.length > 10;
 
-    // 2. Look for overrides in environment variables
+    // IF local config is valid, we HIGHLY prefer it in this environment
+    if (isLocalValid) {
+        console.log(`[Firebase Diagnostics] Using local bootstrapped config for project: ${localConfig.projectId}`);
+        return localConfig;
+    }
+
+    // 2. Look for overrides in environment variables if local config is invalid
     try {
         const apiKey = import.meta.env?.VITE_FIREBASE_API_KEY;
         const configJson = import.meta.env?.VITE_FIREBASE_CONFIG;
-        const nextConfigJson = typeof process !== 'undefined' ? process.env?.NEXT_PUBLIC_FIREBASE_CONFIG : null;
+        const envProjectId = import.meta.env?.VITE_FIREBASE_PROJECT_ID;
 
         if (configJson) {
-            console.log("Using Firebase config from VITE_FIREBASE_CONFIG environment variable");
+            console.log("[Firebase Diagnostics] OVERRIDE: Using Firebase config from VITE_FIREBASE_CONFIG environment variable");
             return JSON.parse(configJson);
         }
 
-        if (nextConfigJson) {
-            console.log("Using Firebase config from NEXT_PUBLIC_FIREBASE_CONFIG environment variable");
-            return JSON.parse(nextConfigJson);
-        }
-
         if (apiKey) {
-            console.log("Using Firebase config from individual VITE_FIREBASE_* environment variables");
+            console.log(`[Firebase Diagnostics] OVERRIDE: Using individual VITE_FIREBASE_* env vars. Project: ${envProjectId}`);
             return {
-                apiKey: apiKey,
+                apiKey,
                 authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-                projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+                projectId: envProjectId,
                 storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
                 messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
                 appId: import.meta.env.VITE_FIREBASE_APP_ID,
@@ -53,16 +55,10 @@ const getFirebaseConfig = () => {
             };
         }
     } catch (error) {
-        console.error("Error parsing environment Firebase config:", error);
+        console.error("[Firebase Diagnostics] Error parsing environment Firebase config:", error);
     }
 
-    // 3. Final Fallback to local config
-    if (isLocalValid) {
-        console.log(`[Firebase Diagnostics] Using bootstrapped config for project: ${localConfig.projectId}`);
-        return localConfig;
-    }
-
-    console.warn("[Firebase Diagnostics] No valid Firebase configuration found. Please check firebase-applet-config.json or run set_up_firebase.");
+    console.warn("[Firebase Diagnostics] No valid Firebase configuration found. Using fallback localConfig (which may be placeholder).");
     return localConfig;
 };
 

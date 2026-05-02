@@ -1,0 +1,209 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "A chat room",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the room" },
+        "createdBy": { "type": "string", "description": "UID of the creator" },
+        "createdAt": { "type": "number", "description": "Timestamp" },
+        "lastMessage": { "type": "string", "description": "Encrypted last message" },
+        "lastMessageAt": { "type": "number", "description": "Timestamp" },
+        "lastMessageSenderId": { "type": "string", "description": "UID of the last message sender" },
+        "lastMessageStatus": { "type": "string", "enum": ["sent", "delivered", "seen"] },
+        "isAI": { "type": "boolean" },
+        "participants": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "createdBy", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A chat message",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "Encrypted message text" },
+        "imageUrl": { "type": "string", "description": "Shared image URL" },
+        "audioUrl": { "type": "string", "description": "Voice message URL" },
+        "fileUrl": { "type": "string", "description": "Shared file URL" },
+        "fileName": { "type": "string", "description": "Shared file name" },
+        "pollId": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "date": { "type": "string" },
+            "time": { "type": "string" }
+          }
+        },
+        "status": { "type": "string", "enum": ["sent", "delivered", "seen"] },
+        "seenBy": { "type": "array", "items": { "type": "string" } },
+        "senderId": { "type": "string", "description": "UID of the sender" },
+        "senderName": { "type": "string", "description": "Name of the sender" },
+        "senderPhotoURL": { "type": "string", "description": "Photo URL of the sender" },
+        "createdAt": { "type": "number", "description": "Timestamp" },
+        "isAI": { "type": "boolean" },
+        "reactions": { "type": "object", "description": "Map of userId to emoji" },
+        "replyTo": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "senderName": { "type": "string" },
+            "text": { "type": "string" },
+            "imageUrl": { "type": "string" }
+          }
+        }
+      },
+      "required": ["senderId", "senderName", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "bio": { "type": "string" },
+        "preferredLanguage": { "type": "string" },
+        "uniqueId": { "type": "string" },
+        "contacts": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["uid", "displayName", "uniqueId", "contacts"]
+    },
+    "Poll": {
+      "title": "Poll",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "votes": {
+          "type": "object",
+          "description": "Map of uid -> option index"
+        },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["roomId", "question", "options", "createdBy", "createdAt"]
+    },
+    "Story": {
+      "title": "Story",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "expiresAt": { "type": "number" },
+        "viewers": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["userId", "userName", "createdAt", "expiresAt", "viewers"]
+    },
+    "UserIdMapping": {
+      "title": "User ID Mapping",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
+    "TypingStatus": {
+      "title": "Typing Status",
+      "type": "object",
+      "properties": {
+        "isTyping": { "type": "boolean" },
+        "lastUpdate": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["isTyping", "lastUpdate"]
+    },
+    "Group": {
+      "title": "Group",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "adminIds": { "type": "array", "items": { "type": "string" } },
+        "memberIds": { "type": "array", "items": { "type": "string" } },
+        "uniqueId": { "type": "string", "description": "5-digit group ID" },
+        "communityId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["name", "adminIds", "memberIds", "uniqueId", "createdAt"]
+    },
+    "Community": {
+      "title": "Community",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "adminIds": { "type": "array", "items": { "type": "string" } },
+        "memberIds": { "type": "array", "items": { "type": "string" } },
+        "uniqueId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["name", "ownerId", "adminIds", "memberIds", "uniqueId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Chat rooms collection"
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages inside a room"
+    },
+    "/rooms/{roomId}/typing/{userId}": {
+      "schema": { "$ref": "#/entities/TypingStatus" },
+      "description": "Real-time typing status"
+    },
+    "/userProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles with ID and contacts"
+    },
+    "/user_ids/{uniqueId}": {
+      "schema": { "$ref": "#/entities/UserIdMapping" },
+      "description": "Mapping of DB-XXXXX to UID"
+    },
+    "/stories/{storyId}": {
+      "schema": { "$ref": "#/entities/Story" },
+      "description": "User stories/status updates"
+    },
+    "/rooms/{roomId}/polls/{pollId}": {
+      "schema": { "$ref": "#/entities/Poll" },
+      "description": "Polls in a room"
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/Group" },
+      "description": "Group chat metadata"
+    },
+    "/groups/{groupId}/messages/{msgId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages in a group"
+    },
+    "/communities/{communityId}": {
+      "schema": { "$ref": "#/entities/Community" },
+      "description": "Communities"
+    },
+    "/communities/{communityId}/announcements/{msgId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Announcement channel messages"
+    },
+    "/group_ids/{uniqueId}": {
+      "schema": { "type": "object", "properties": { "groupId": { "type": "string" } } },
+      "description": "Mapping for 5-digit group IDs"
+    }
+  }
+}

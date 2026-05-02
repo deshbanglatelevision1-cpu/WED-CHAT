@@ -1,0 +1,10 @@
+{
+  "name": "Remix: Nameweb Chat",
+  "description": "A secure, real-time messaging application with End-to-End Encryption, featuring a Premium Blue and Master Red theme.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": []
+}

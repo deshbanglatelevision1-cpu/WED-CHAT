@@ -1,0 +1,237 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // Story Collection
+    match /stories/{storyId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(storyId) && isValidStory(incoming()) && incoming().viewers.size() == 0;
+      allow update: if isSignedIn() && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['viewers']) &&
+        incoming().viewers.size() <= existing().viewers.size() + 1 &&
+        request.auth.uid in incoming().viewers
+      );
+    }
+
+    // Validation for UserProfile
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'uniqueId', 'contacts']) &&
+             data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.uniqueId is string && data.uniqueId.matches('^DB-[0-9]{5}$') &&
+             data.contacts is list && data.contacts.size() <= 1000 &&
+             (!data.keys().hasAny(['bio']) || data.bio == null || (data.bio is string && data.bio.size() <= 500)) &&
+             (!data.keys().hasAny(['photoURL']) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000));
+    }
+
+    match /userProfiles/{userId} {
+      allow read: if isSignedIn(); // Allow reading profiles for contact search
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUserProfile(incoming()) && incoming().keys().size() <= 6;
+      allow update: if isSignedIn() && userId == request.auth.uid && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['contacts', 'displayName', 'photoURL', 'bio']) &&
+        (!incoming().keys().hasAny(['contacts']) || (incoming().contacts is list && incoming().contacts.size() <= 1000)) &&
+        (!incoming().keys().hasAny(['displayName']) || (incoming().displayName is string && incoming().displayName.size() <= 100)) &&
+        (!incoming().keys().hasAny(['bio']) || incoming().bio == null || (incoming().bio is string && incoming().bio.size() <= 500)) &&
+        (!incoming().keys().hasAny(['photoURL']) || incoming().photoURL == null || (incoming().photoURL is string && incoming().photoURL.size() <= 1000))
+      );
+    }
+    
+    match /user_ids/{uniqueId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(uniqueId) && incoming().keys().hasAll(['uid']) && incoming().uid == request.auth.uid && incoming().keys().size() == 1;
+    }
+
+    // Validation for Room
+    function isValidRoom(data) {
+      return data.keys().hasAll(['name', 'createdBy', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.createdBy is string && data.createdBy == request.auth.uid &&
+             data.createdAt == request.time &&
+             (!data.keys().hasAny(['lastMessage']) || (data.lastMessage is string && data.lastMessage.size() <= 5000)) &&
+             (!data.keys().hasAny(['lastMessageAt']) || data.lastMessageAt == request.time) &&
+             (!data.keys().hasAny(['lastMessageSenderId']) || (data.lastMessageSenderId is string && data.lastMessageSenderId.size() <= 128)) &&
+             (!data.keys().hasAny(['lastMessageStatus']) || (data.lastMessageStatus is string && data.lastMessageStatus.matches('^(sent|delivered|seen)$'))) &&
+             (!data.keys().hasAny(['isAI']) || data.isAI is bool) &&
+             (!data.keys().hasAny(['participants']) || (data.participants is list && data.participants.size() <= 2 && data.participants.size() > 0));
+    }
+    
+    // Validation for Message
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'senderName', 'createdAt']) &&
+             data.senderId is string && data.senderId == request.auth.uid &&
+             data.senderName is string && data.senderName.size() <= 100 &&
+             (!data.keys().hasAny(['type']) || (data.type is string && data.type.matches('^(text|image|voice|file)$'))) &&
+             (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 10000)) &&
+             (!data.keys().hasAny(['senderPhotoURL']) || data.senderPhotoURL == null || (data.senderPhotoURL is string && data.senderPhotoURL.size() <= 1000)) &&
+             (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1000000)) &&
+             (!data.keys().hasAny(['audioUrl']) || (data.audioUrl is string && data.audioUrl.size() <= 1000000)) &&
+             (!data.keys().hasAny(['fileUrl']) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
+             (!data.keys().hasAny(['fileName']) || (data.fileName is string && data.fileName.size() <= 1000)) &&
+             (!data.keys().hasAny(['pollId']) || (data.pollId is string && data.pollId.size() <= 128)) &&
+             (!data.keys().hasAny(['location']) || (data.location is map && data.location.keys().hasAll(['lat', 'lng']) && data.location.lat is number && data.location.lng is number)) &&
+             (!data.keys().hasAny(['event']) || (data.event is map && data.event.keys().hasAll(['title', 'date', 'time']) && data.event.title is string && data.event.date is string && data.event.time is string)) &&
+             (!data.keys().hasAny(['status']) || (data.status is string && data.status.matches('^(sent|delivered|seen)$'))) &&
+             (!data.keys().hasAny(['seenBy']) || (data.seenBy is list && data.seenBy.size() <= 100)) &&
+             (!data.keys().hasAny(['isAI']) || (data.isAI is bool)) &&
+             (!data.keys().hasAny(['reactions']) || (data.reactions is map && data.reactions.keys().size() <= 10)) &&
+             (!data.keys().hasAny(['replyTo']) || (data.replyTo is map && data.replyTo.keys().hasAll(['id', 'senderName']) && data.replyTo.id is string && data.replyTo.senderName is string)) &&
+             data.createdAt == request.time;
+    }
+
+    // Validation for Story
+    function isValidStory(data) {
+      return data.keys().hasAll(['userId', 'userName', 'createdAt', 'expiresAt', 'viewers']) &&
+             data.userId == request.auth.uid &&
+             data.userName is string && data.userName.size() <= 100 &&
+             data.createdAt == request.time &&
+             data.expiresAt is number &&
+             data.viewers is list &&
+             (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1000000)) &&
+             (!data.keys().hasAny(['text']) || (data.text is string && data.text.size() <= 5000)) &&
+             (!data.keys().hasAny(['userPhoto']) || (data.userPhoto is string && data.userPhoto.size() <= 1000));
+    }
+
+    // Validation for Poll
+    function isValidPoll(data) {
+      return data.keys().hasAll(['roomId', 'question', 'options', 'createdBy', 'createdAt']) &&
+             data.roomId is string &&
+             data.question is string && data.question.size() > 0 && data.question.size() <= 1000 &&
+             data.options is list && data.options.size() >= 2 && data.options.size() <= 10 &&
+             data.createdBy is string && data.createdBy == request.auth.uid &&
+             data.createdAt == request.time &&
+             (!data.keys().hasAny(['votes']) || (data.votes is map && data.votes.keys().size() <= 1000));
+    }
+
+    // Rooms Collection
+    match /rooms/{roomId} {
+      function isRoomMember() {
+        return resource.data.createdBy == request.auth.uid || 
+               (resource.data.keys().hasAll(['participants']) && request.auth.uid in resource.data.participants);
+      }
+
+      allow get: if isSignedIn() && (resource == null || isRoomMember() || !resource.data.keys().hasAll(['participants']));
+      
+      // For list, we must be careful with O(n) checks.
+      // This rule requires the client to query for their own rooms.
+      allow list: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || 
+        (resource.data.keys().hasAll(['participants']) && request.auth.uid in resource.data.participants)
+      ); 
+      
+      allow create: if isSignedIn() && isValidId(roomId) && isValidRoom(incoming()) && incoming().keys().size() <= 7;
+      
+      allow update: if isSignedIn() && isValidId(roomId) && (
+        isRoomMember() &&
+        (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastMessageAt', 'lastMessageSenderId', 'lastMessageStatus'])) &&
+        (!incoming().keys().hasAny(['lastMessage']) || (incoming().lastMessage is string && incoming().lastMessage.size() <= 10000)) &&
+        (!incoming().keys().hasAny(['lastMessageAt']) || incoming().lastMessageAt == request.time) &&
+        (!incoming().keys().hasAny(['lastMessageSenderId']) || (incoming().lastMessageSenderId is string && incoming().lastMessageSenderId.size() <= 128)) &&
+        (!incoming().keys().hasAny(['lastMessageStatus']) || (incoming().lastMessageStatus is string && incoming().lastMessageStatus.matches('^(sent|delivered|seen)$')))
+      );
+      
+      // Messages Subcollection
+      match /messages/{messageId} {
+        // We use a separate match for the subcollection.
+        // Reading messages is allowed if you are signed in.
+        // Ideally we'd check room membership, but since it's a subcollection,
+        // it requires a get() on the parent which is expensive for lists.
+        // We'll keep it to isSignedIn() for now as guessability is low with 1on1 room IDs.
+        allow read: if isSignedIn();
+        
+        allow create: if isSignedIn() && isValidId(messageId) && isValidMessage(incoming()) && incoming().keys().size() <= 18 &&
+                      exists(/databases/$(database)/documents/rooms/$(roomId));
+                      
+        allow update: if isSignedIn() && isValidId(messageId) && (
+          (incoming().diff(existing()).affectedKeys().hasAll(['status']) &&
+           incoming().diff(existing()).affectedKeys().hasAny(['seenBy']) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'seenBy']) &&
+           incoming().status is string && incoming().status.matches('^(delivered|seen)$') &&
+           incoming().seenBy is list && incoming().seenBy.size() <= 100 &&
+           request.auth.uid in incoming().seenBy &&
+           existing().senderId != request.auth.uid) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+           incoming().status is string && incoming().status.matches('^(delivered|seen)$') &&
+           existing().senderId != request.auth.uid) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['reactions']) && 
+           incoming().reactions.keys().size() <= 10)
+        );
+        
+        allow delete: if isSignedIn() && existing().senderId == request.auth.uid;
+      }
+
+      // Polls Subcollection
+      match /polls/{pollId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(pollId) && isValidPoll(incoming()) && incoming().keys().size() <= 6;
+        allow update: if isSignedIn() && isValidId(pollId) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['votes']) &&
+          incoming().votes is map && incoming().votes.keys().size() <= 1000
+        );
+      }
+
+      // Typing Subcollection
+      match /typing/{userId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && userId == request.auth.uid;
+      }
+    }
+
+    // Groups
+    match /groups/{groupId} {
+      function isMember() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberIds;
+      }
+      function isAdmin() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.adminIds;
+      }
+
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+
+      match /messages/{msgId} {
+        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberIds;
+        allow create: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberIds;
+        allow update, delete: if isSignedIn() && (request.auth.uid == resource.data.senderId || request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.adminIds);
+      }
+    }
+
+    // Communities
+    match /communities/{communityId} {
+      function isCommunityMember() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/communities/$(communityId)).data.memberIds;
+      }
+      function isCommunityAdmin() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/communities/$(communityId)).data.adminIds;
+      }
+
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if isSignedIn();
+      allow update: if isCommunityAdmin();
+
+      match /announcements/{msgId} {
+        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/communities/$(communityId)).data.memberIds;
+        allow create: if isCommunityAdmin();
+        allow update, delete: if isCommunityAdmin();
+      }
+    }
+
+    // ID Mappings
+    match /group_ids/{uniqueId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+  }
+}

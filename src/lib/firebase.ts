@@ -45,7 +45,13 @@ export const storage = getStorage(app);
 
 export const googleProvider = new GoogleAuthProvider();
 
+let isSigningIn = false;
 export const loginWithGoogle = async () => {
+  if (isSigningIn) {
+    console.warn("Sign-in already in progress, ignoring duplicate call.");
+    return;
+  }
+  isSigningIn = true;
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
@@ -54,6 +60,8 @@ export const loginWithGoogle = async () => {
       console.error("Error signing in with Google:", error);
     }
     throw error;
+  } finally {
+    isSigningIn = false;
   }
 };
 

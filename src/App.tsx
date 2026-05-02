@@ -98,6 +98,7 @@ export default function App() {
   const [groupInviteSearch, setGroupInviteSearch] = useState("");
   const [groupInviteResults, setGroupInviteResults] = useState<UserProfile[]>([]);
   const [isInviteSearching, setIsInviteSearching] = useState(false);
+  const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
   const [groupMembers, setGroupMembers] = useState<UserProfile[]>([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1236,18 +1237,45 @@ export default function App() {
           </div>
           <h1 className="text-3xl font-bold text-center mb-2">Nameweb Chat</h1>
           <p className="text-gray-400 text-center mb-8">Secure E2EE Real-time Messaging</p>
+          
+          {loginErrorMessage && (
+            <div className="mb-6 p-4 bg-master-red/10 border border-master-red/20 rounded-xl text-master-red text-sm animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-start gap-3">
+                <Shield size={18} className="flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-bold mb-1">Access Denied</p>
+                  <p className="text-xs opacity-90 leading-relaxed">{loginErrorMessage}</p>
+                  {loginErrorMessage.includes("unauthorized-domain") || loginErrorMessage.includes("Authorized domains") ? (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] text-white/60">How to fix:</p>
+                      <ol className="text-[10px] list-decimal list-inside space-y-1 text-white/50">
+                        <li>Open <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-premium-blue hover:underline">Firebase Console</a></li>
+                        <li>Authentication &gt; Settings &gt; Authorized Domains</li>
+                        <li>Add <code className="bg-black/40 px-1 rounded text-white">{window.location.hostname}</code></li>
+                      </ol>
+                    </div>
+                  ) : null}
+                </div>
+                <button onClick={() => setLoginErrorMessage(null)} className="text-master-red/50 hover:text-master-red">
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+
           <button
             onClick={() => {
+              setLoginErrorMessage(null);
               loginWithGoogle().catch((error: any) => {
                 if (error.code === 'auth/popup-blocked') {
-                  alert("Login popup was blocked by your browser. Please allow popups for this site, or open the app in a new tab (using the button in the top right) to sign in.");
+                  setLoginErrorMessage("Login popup was blocked. Please allow popups or open the app in a new tab.");
                 } else if (error.code === 'auth/unauthorized-domain') {
-                  alert("This domain is not authorized for Firebase Authentication. Please follow these steps:\n\n1. Go to Firebase Console > Authentication > Settings > Authorized domains.\n2. Add '" + window.location.hostname + "' to the list.\n\nAfter adding it, wait a few seconds and try again.");
+                  setLoginErrorMessage(`Unauthorized Domain: ${window.location.hostname}. This happens when you deploy to a new domain (like Vercel) without adding it to Firebase.`);
                 } else if (error.code === 'auth/cancelled-popup-request') {
-                  console.warn("Popup request cancelled by a subsequent request.");
+                  console.warn("Popup request cancelled.");
                 } else if (error.code !== 'auth/popup-closed-by-user') {
                   console.error(error);
-                  alert(`Failed to sign in: ${error.message}`);
+                  setLoginErrorMessage(error.message);
                 }
               });
             }}
